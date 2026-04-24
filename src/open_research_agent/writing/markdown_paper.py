@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from open_research_agent.writing.bibliography import BibliographyEntry
+
 
 def build_markdown_paper(context: dict[str, Any]) -> str:
     brief = context.get("brief", {})
@@ -12,6 +14,23 @@ def build_markdown_paper(context: dict[str, Any]) -> str:
     claims = evidence.get("claims", [])
     limitations = evidence.get("limitations", [])
     paper_format = context.get("paper_format", "ieee")
+    bibliography = [
+        BibliographyEntry(**entry)
+        for entry in context.get("bibliography_entries", [])
+    ]
+    cite_keys = [entry.key for entry in bibliography[:3]]
+    cite_suffix = f" [@{cite_keys[0]}]" if cite_keys else ""
+    related_work_lines = (
+        [
+            f"- Prior work anchor: {entry.title} [@{entry.key}]"
+            for entry in bibliography[:5]
+        ]
+        if bibliography
+        else [
+            "This section is intentionally conservative in v0.1. Provided references are treated as "
+            "source material, while external literature search is scheduled for a later adapter."
+        ]
+    )
 
     lines = [
         f"# {selected_idea.get('title', 'AUTO Research Draft')}",
@@ -22,18 +41,17 @@ def build_markdown_paper(context: dict[str, Any]) -> str:
         "",
         f"This draft studies {brief.get('problem', context.get('seed'))}. "
         "It proposes an auditable AUTO Research workflow that connects idea generation, "
-        "novelty checks, exploration, evidence synthesis, paper writing, review, and revision.",
+        f"novelty checks, exploration, evidence synthesis, paper writing, review, and revision.{cite_suffix}",
         "",
         "## Introduction",
         "",
         "Automated research systems need more than fluent paper writing. They need a traceable "
         "process that preserves why directions were selected, what evidence was collected, and "
-        "which claims are supported.",
+        f"which claims are supported.{cite_suffix}",
         "",
         "## Related Work",
         "",
-        "This section is intentionally conservative in v0.1. Provided references are treated as "
-        "source material, while external literature search is scheduled for a later adapter.",
+        *related_work_lines,
         "",
         "## Method",
         "",
