@@ -158,3 +158,38 @@ Changed:
 - real Web runs without a configured model API are rejected unless demo mode is
   intentionally selected;
 - Web form exposes PDF compilation as an explicit option.
+
+## v0.2.5 Evidence Gate And Code Artifacts
+
+Date: 2026-04-24
+
+Changed:
+
+- S03 now asks the model provider for manuscript sections instead of always
+  using a fixed framework-description template;
+- S02 writes a generated `code/` experiment scaffold with method, config,
+  result schema, and run script artifacts;
+- Web checkpoint preview includes generated code, `paper/main.tex`, and compile
+  report;
+- Web PDF compilation is enabled by default, while still requiring a local
+  LaTeX installation;
+- S04 quality gate now rejects claims with `hypothesis`, `provisional`,
+  `partial`, `pending`, missing support, or `support: None`;
+- unsupported empirical claims route back to S02 instead of being marked as
+  `submission_candidate`.
+
+## v0.2.6 Local Execution And LaTeX Compilation
+
+Date: 2026-04-24
+
+Changed:
+
+- S02 writes code before invoking the execution backend;
+- shell backend now runs generated experiment code by default when no explicit
+  command is provided;
+- Web defaults to local shell execution instead of dry-run;
+- generated experiment scripts write `code/experiments/result.json`;
+- LaTeX compilation now prefers `latexmk`, falls back to `xelatex` or
+  `pdflatex`, and performs multi-pass compilation;
+- compile reports include engine, pass count, command logs, and PDF path when
+  generated.

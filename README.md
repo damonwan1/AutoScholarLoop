@@ -54,7 +54,9 @@ the paper, and where quality gates passed or failed.
   model-backed research run.
 - OpenAI-compatible provider adapter for real model APIs.
 - Local, Semantic Scholar, and OpenAlex literature adapters.
-- Dry-run and shell execution backends.
+- Dry-run and local shell execution backends. The Web console defaults to local
+  shell execution: model-generated code is written under `code/` and then run
+  on the current machine.
 - Format-aware paper writing for `acm`, `ieee`, `springer_lncs`, and
   `chinese_thesis`.
 - Markdown and LaTeX manuscript export.
@@ -114,6 +116,28 @@ By default, `local` provider mode is a deterministic demo. For real research
 runs, configure an OpenAI-compatible model provider and API key. The system
 always writes `paper/main.tex`; PDF generation is attempted only when explicitly
 enabled and when the local LaTeX environment supports the selected format.
+The compiler prefers `latexmk`, then falls back to `xelatex` or `pdflatex`
+with multi-pass compilation.
+
+If your network environment injects a system proxy that breaks `httpx`
+connections, set:
+
+```powershell
+$env:AUTOSCHOLARLOOP_HTTP_TRUST_ENV='0'
+```
+
+Example for DeepSeek-compatible APIs:
+
+```powershell
+$env:OPENAI_API_KEY='your_api_key'
+$env:AUTOSCHOLARLOOP_HTTP_TRUST_ENV='0'
+autoscholarloop run `
+  --seed "your research idea" `
+  --provider openai-compatible `
+  --model deepseek-chat `
+  --base-url https://api.deepseek.com/v1 `
+  --workspace runs/deepseek_demo
+```
 
 ## Web Console
 
@@ -133,6 +157,9 @@ npm run dev
 The Web console supports:
 
 - first-run large model API configuration;
+- DeepSeek preset for `deepseek-chat` and `https://api.deepseek.com/v1`;
+- optional system proxy bypass for environments where `httpx` fails through
+  inherited proxy settings;
 - research direction and target venue input;
 - PDF, Markdown, text, and BibTeX upload;
 - loop mode and backend selection;
@@ -151,6 +178,7 @@ run/
   inputs/
   artifacts/
   logs/
+  code/
   00_field_context/
   01_decision/
   02_execution/
@@ -162,6 +190,9 @@ run/
 
 Important outputs include:
 
+- `code/experiments/run_experiment.py`
+- `code/methods/proposed_method.py`
+- `code/experiments/result.json`
 - `00_field_context/field_map.md`
 - `00_field_context/paper_cards.md`
 - `01_decision/IDEA_REPORT.md`
@@ -173,8 +204,10 @@ Important outputs include:
 - `03_writing/claim_evidence_table.md`
 - `04_quality/CITATION_AUDIT.md`
 - `04_quality/final_gate.md`
+- `04_quality/compile_report.md`
 - `paper/final_draft.md`
 - `paper/main.tex`
+- `paper/main.pdf` if local LaTeX compilation succeeds
 - `release/README.md`
 
 ## Paper Formats

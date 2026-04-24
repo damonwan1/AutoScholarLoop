@@ -12,6 +12,9 @@ def build_markdown_paper(context: dict[str, Any]) -> str:
     claims = evidence.get("claims", [])
     limitations = evidence.get("limitations", [])
     paper_format = context.get("paper_format", "ieee")
+    manuscript = context.get("manuscript", {})
+    if manuscript:
+        return _build_from_manuscript(manuscript, context, claims, limitations, paper_format)
 
     lines = [
         f"# {selected_idea.get('title', 'AUTO Research Draft')}",
@@ -71,6 +74,73 @@ def build_markdown_paper(context: dict[str, Any]) -> str:
             "## Reproducibility Note",
             "",
             "All stage artifacts are stored in the run workspace manifest.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_from_manuscript(
+    manuscript: dict[str, Any],
+    context: dict[str, Any],
+    claims: list[dict[str, Any]],
+    limitations: list[str],
+    paper_format: str,
+) -> str:
+    title = manuscript.get("title") or "AUTO Research Draft"
+    lines = [
+        f"# {title}",
+        "",
+        f"Format target: {paper_format}",
+        "",
+        "## Abstract",
+        "",
+        manuscript.get("abstract", ""),
+        "",
+        "## Introduction",
+        "",
+        manuscript.get("introduction", ""),
+        "",
+        "## Related Work",
+        "",
+        manuscript.get("related_work", ""),
+        "",
+        "## Method",
+        "",
+        manuscript.get("method", ""),
+        "",
+        "## Experiments",
+        "",
+        manuscript.get("experiments", ""),
+        "",
+        "## Results",
+        "",
+        manuscript.get("results", ""),
+        "",
+        "## Claim-Evidence Status",
+        "",
+    ]
+    if claims:
+        for claim in claims:
+            lines.append(f"- Claim: {claim.get('claim')}")
+            lines.append(f"  Support: {claim.get('support')}")
+            lines.append(f"  Status: {claim.get('status')}")
+    else:
+        lines.append("- No supported claims were produced.")
+
+    merged_limitations = limitations or manuscript.get("limitations") or []
+    lines.extend(["", "## Limitations", ""])
+    for limitation in merged_limitations:
+        lines.append(f"- {limitation}")
+    lines.extend(
+        [
+            "",
+            "## Conclusion",
+            "",
+            manuscript.get("conclusion", ""),
+            "",
+            "## Reproducibility Note",
+            "",
+            "All generated code, checkpoints, LaTeX files, and quality reports are stored in the run workspace.",
         ]
     )
     return "\n".join(lines)

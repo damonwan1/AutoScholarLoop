@@ -16,6 +16,8 @@ const zh = {
   model: '\u6a21\u578b',
   baseUrl: 'Base URL',
   apiKey: 'API Key',
+  deepseekPreset: 'DeepSeek \u9884\u8bbe',
+  trustEnv: '\u4f7f\u7528\u7cfb\u7edf\u4ee3\u7406\u73af\u5883\u53d8\u91cf',
   save: '\u4fdd\u5b58\u914d\u7f6e',
   later: '\u7a0d\u540e\u518d\u8bf4',
   brief: '\u542f\u52a8\u4e00\u4e2a\u79d1\u7814\u95ed\u73af',
@@ -25,12 +27,12 @@ const zh = {
   loopMode: 'Loop \u6a21\u5f0f',
   ideas: '\u5019\u9009 idea \u6570',
   literature: '\u6587\u732e\u68c0\u7d22',
-  backend: '\u5b9e\u9a8c\u540e\u7aef',
+  backend: '\u5b9e\u9a8c\u540e\u7aef\uff08\u9ed8\u8ba4\u672c\u673a\u8fd0\u884c\uff09',
   decisionRounds: '\u6559\u6388\u51b3\u7b56\u8f6e\u6b21',
   executionRounds: '\u535a\u58eb\u6267\u884c\u8f6e\u6b21',
   writingRounds: '\u5199\u4f5c\u5ba1\u7a3f\u8f6e\u6b21',
   bigLoops: '\u5168\u5c40\u5927\u5faa\u73af\u6b21\u6570',
-  compilePdf: '\u5c1d\u8bd5\u7f16\u8bd1 PDF',
+  compilePdf: '\u5c1d\u8bd5\u7f16\u8bd1 PDF\uff08\u9700\u8981\u672c\u5730 LaTeX\uff09',
   demoMode: 'Demo mode\uff08\u672a\u914d\u7f6e\u5927\u6a21\u578b\u65f6\u624d\u5141\u8bb8\u672c\u5730\u5feb\u901f\u6f14\u793a\uff09',
   upload: '\u4e0a\u4f20\u8fd1\u671f\u8bba\u6587 PDF / notes',
   uploadEmpty: '\u9009\u62e9 3-10 \u4efd\u53c2\u8003\u6750\u6599',
@@ -68,6 +70,8 @@ const en = {
   model: 'Model',
   baseUrl: 'Base URL',
   apiKey: 'API Key',
+  deepseekPreset: 'DeepSeek Preset',
+  trustEnv: 'Use system proxy environment variables',
   save: 'Save Configuration',
   later: 'Later',
   brief: 'Start A Research Loop',
@@ -77,12 +81,12 @@ const en = {
   loopMode: 'Loop Mode',
   ideas: 'Candidate Ideas',
   literature: 'Literature Backend',
-  backend: 'Execution Backend',
+  backend: 'Execution Backend (local by default)',
   decisionRounds: 'Professor Decision Rounds',
   executionRounds: 'PhD Execution Rounds',
   writingRounds: 'Writing Review Rounds',
   bigLoops: 'Global Big Loops',
-  compilePdf: 'Attempt PDF Compilation',
+  compilePdf: 'Attempt PDF Compilation (requires local LaTeX)',
   demoMode: 'Demo mode (allows local deterministic run without a model API)',
   upload: 'Upload Recent Papers / Notes',
   uploadEmpty: 'Select 3-10 reference files',
@@ -161,7 +165,14 @@ const statusText = {
   active: { en: 'active', zh: '\u8fdb\u884c\u4e2d' },
 }
 
-const config = reactive({ provider: 'local', model: 'local-researcher', base_url: '', api_key: '', has_api_key: false })
+const config = reactive({
+  provider: 'local',
+  model: 'local-researcher',
+  base_url: '',
+  api_key: '',
+  has_api_key: false,
+  http_trust_env: true,
+})
 const form = reactive({
   seed: '',
   target_venue: '',
@@ -173,8 +184,8 @@ const form = reactive({
   max_big_loops: 2,
   num_ideas: 3,
   literature: 'local',
-  execution_backend: 'dry-run',
-  compile_pdf: false,
+  execution_backend: 'shell',
+  compile_pdf: true,
   demo_mode: false,
 })
 
@@ -220,6 +231,7 @@ async function loadConfig() {
       base_url: data.base_url || '',
       api_key: '',
       has_api_key: Boolean(data.has_api_key),
+      http_trust_env: data.http_trust_env !== false,
     })
   } catch {
     message.value = 'Cannot connect to backend API.'
@@ -245,6 +257,16 @@ async function saveConfig() {
 
 function onFiles(event) {
   selectedFiles.value = Array.from(event.target.files || [])
+}
+
+function applyDeepSeekPreset() {
+  Object.assign(config, {
+    provider: 'openai-compatible',
+    model: 'deepseek-chat',
+    base_url: 'https://api.deepseek.com/v1',
+    http_trust_env: false,
+  })
+  configOpen.value = true
 }
 
 function applyPreset() {
@@ -278,6 +300,7 @@ async function startRun() {
   body.append('model', config.model)
   body.append('base_url', config.base_url || '')
   body.append('api_key', config.api_key || '')
+  body.append('http_trust_env', config.http_trust_env)
   selectedFiles.value.forEach((file) => body.append('files', file))
   try {
     const response = await fetch(`${API_BASE}/api/runs`, { method: 'POST', body })
@@ -342,6 +365,13 @@ async function openArtifact(item) {
         <label>{{ t.baseUrl }}<input v-model="config.base_url" placeholder="https://api.openai.com/v1" /></label>
         <label>{{ t.apiKey }}
           <input v-model="config.api_key" type="password" :placeholder="config.has_api_key ? t.placeholders.apiSaved : t.placeholders.apiNew" />
+        </label>
+      </div>
+      <div class="actions compact-actions">
+        <button class="ghost" type="button" @click="applyDeepSeekPreset">{{ t.deepseekPreset }}</button>
+        <label class="checkline config-check">
+          <input v-model="config.http_trust_env" type="checkbox" />
+          <span>{{ t.trustEnv }}</span>
         </label>
       </div>
       <p v-if="config.provider === 'local'" class="hint">{{ t.localWarning }}</p>

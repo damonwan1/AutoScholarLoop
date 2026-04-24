@@ -224,6 +224,18 @@ class ResearchGroupLoopPipeline:
                 context=dict(context, execution_round=round_id, focus=focus),
                 schema_hint={"objective": "str", "work_packages": "list[str]"},
             )
+            code_generation = self.provider.complete_json(
+                role="phd_code_agent",
+                task="code_generation",
+                context=dict(context, execution_round=round_id, focus=focus, plan=plan),
+                schema_hint={
+                    "files": "list[{path:str, content:str}]",
+                    "commands": "list[str]",
+                    "notes": "str",
+                },
+            )
+            code_paths = _write_experiment_scaffold(workspace, context, execution_history, code_generation)
+            plan["commands"] = code_generation.get("commands") or plan.get("commands", [])
             backend = self.services["executor"].execute(workspace.root, plan)
             execution = self.provider.complete_json(
                 role="phd_execution_group",
@@ -270,6 +282,9 @@ class ResearchGroupLoopPipeline:
             )
         context["execution_history"] = execution_history
         context["execution"] = {"runs": execution_history, "status": "writing_ready"}
+        context["code_artifacts"] = sorted(
+            str(path) for path in (workspace.root / "code").rglob("*") if path.is_file()
+        )
         analysis = _results_analysis_markdown(execution_history)
         claims = _claims_from_results_markdown(execution_history)
         audit = _experiment_audit_markdown(execution_history)
@@ -278,6 +293,8 @@ class ResearchGroupLoopPipeline:
         write_canonical(workspace, "02_execution", "RESULTS_ANALYSIS.md", analysis)
         write_canonical(workspace, "02_execution", "CLAIMS_FROM_RESULTS.md", claims)
         write_canonical(workspace, "02_execution", "EXPERIMENT_AUDIT.md", audit)
+        write_canonical(workspace, "02_execution", "GENERATED_CODE.md", _generated_code_markdown(context["code_artifacts"]))
+        paths.extend(context["code_artifacts"])
         paths.append(
             workspace.write_artifact(
                 Artifact(
@@ -298,6 +315,23 @@ class ResearchGroupLoopPipeline:
             schema_hint={"claims": "list[claim]", "limitations": "list[str]"},
         )
         context["evidence"] = evidence
+        manuscript = self.provider.complete_json(
+            role="paper_writer_group",
+            task="paper_draft",
+            context=dict(context),
+            schema_hint={
+                "title": "str",
+                "abstract": "str",
+                "introduction": "str",
+                "related_work": "str",
+                "method": "str",
+                "experiments": "str",
+                "results": "str",
+                "limitations": "list[str]",
+                "conclusion": "str",
+            },
+        )
+        context["manuscript"] = manuscript
         paper_format = get_paper_format(context.get("paper_format", "ieee"))
         paper = build_markdown_paper(context)
         draft_path = workspace.write_markdown("03_writing", "draft.md", paper)
@@ -373,17 +407,19 @@ class ResearchGroupLoopPipeline:
     def _s04_quality_gate(self, workspace: ResearchWorkspace, context: PipelineContext) -> None:
         evidence = context.get("evidence", {})
         unsupported = [
-            item for item in evidence.get("claims", []) if "unsupported" in item.get("status", "")
+            item for item in evidence.get("claims", []) if _is_unsupported_claim(item)
         ]
+        claims = evidence.get("claims", [])
+        missing_evidence = not claims or bool(unsupported)
         gate = {
-            "decision": "submission_candidate" if not unsupported else "revise_writing",
-            "return_to": None if not unsupported else "S03",
+            "decision": "submission_candidate" if not missing_evidence else "return_to_execution",
+            "return_to": None if not missing_evidence else "S02",
             "unsupported_claims": unsupported,
             "checks": {
                 "novelty": "pass_with_local_evidence",
                 "citation": "needs_real_bibtex_loop" if not context.get("literature_hits") else "pass",
                 "reproducibility": "pass_for_recorded_artifacts",
-                "claim_evidence": "pass" if not unsupported else "fail",
+                "claim_evidence": "pass" if not missing_evidence else "fail",
             },
         }
         context["quality_gate"] = gate
@@ -617,6 +653,165 @@ def _experiment_audit_markdown(history: list[dict[str, Any]]) -> str:
         "- baseline_fairness: pending baseline reproduction\n"
         "- action: downgrade empirical claims until shell-backed experiments are available\n"
     )
+
+
+def _write_experiment_scaffold(
+    workspace: ResearchWorkspace,
+    context: dict[str, Any],
+    history: list[dict[str, Any]],
+    code_generation: dict[str, Any] | None = None,
+) -> list[str]:
+    code_root = workspace.root / "code"
+    experiments = code_root / "experiments"
+    methods = code_root / "methods"
+    experiments.mkdir(parents=True, exist_ok=True)
+    methods.mkdir(parents=True, exist_ok=True)
+    selected = context.get("selected_idea", "direction_1")
+    seed = context.get("seed", "")
+    config = {
+        "research_seed": seed,
+        "selected_idea": selected,
+        "backend": "dry-run-compatible",
+        "datasets": ["replace_with_real_dataset"],
+        "baselines": ["replace_with_real_baseline"],
+        "metrics": ["accuracy", "compute_cost", "latency"],
+        "note": "Generated scaffold. Replace placeholders before making empirical claims.",
+    }
+    files = {
+        code_root / "README.md": (
+            "# Generated Experiment Workspace\n\n"
+            "This folder is produced by S02 PhD Execution. It is a runnable scaffold, "
+            "not evidence by itself. Empirical claims require real datasets, baselines, "
+            "and result files.\n\n"
+            "## Files\n\n"
+            "- `experiments/run_experiment.py`: CLI entrypoint for a sanity experiment.\n"
+            "- `methods/proposed_method.py`: placeholder method module.\n"
+            "- `experiments/config.json`: experiment configuration.\n"
+            "- `experiments/results_schema.json`: expected result schema.\n"
+        ),
+        experiments / "config.json": json.dumps(config, indent=2, ensure_ascii=False),
+        experiments / "results_schema.json": json.dumps(
+            {
+                "required": ["run_id", "dataset", "method", "baseline", "metrics", "claim_support"],
+                "metrics": {"accuracy": "float", "compute_cost": "float", "latency": "float"},
+            },
+            indent=2,
+        ),
+        methods / "proposed_method.py": _proposed_method_py(),
+        experiments / "run_experiment.py": _run_experiment_py(),
+    }
+    for item in (code_generation or {}).get("files", []):
+        rel = str(item.get("path", "")).replace("\\", "/").lstrip("/")
+        if not rel or ".." in Path(rel).parts:
+            continue
+        path = workspace.root / rel
+        if path.suffix not in {".py", ".json", ".yaml", ".yml", ".md", ".txt", ".sh", ".ps1"}:
+            continue
+        files[path] = str(item.get("content", ""))
+    commands = (code_generation or {}).get("commands") or [
+        "python code/experiments/run_experiment.py --config code/experiments/config.json --output code/experiments/result.json"
+    ]
+    files[code_root / "run_commands.json"] = json.dumps({"commands": commands}, indent=2, ensure_ascii=False)
+    paths = []
+    for path, content in files.items():
+        path.write_text(content, encoding="utf-8")
+        paths.append(str(path))
+    return paths
+
+
+def _proposed_method_py() -> str:
+    return '''"""Generated placeholder method module.
+
+Replace this scaffold with the actual proposed method before treating any
+result as scientific evidence.
+"""
+
+
+class ProposedMethod:
+    def __init__(self, config):
+        self.config = config
+
+    def fit(self, train_data):
+        return self
+
+    def predict(self, batch):
+        # Placeholder: preserve input cardinality for smoke tests.
+        return [0 for _ in batch]
+
+    def cost_estimate(self):
+        return {"compute_cost": 0.0, "latency": 0.0}
+'''
+
+
+def _run_experiment_py() -> str:
+    return '''"""Run a generated sanity experiment.
+
+This script intentionally writes a low-confidence placeholder result unless
+connected to real datasets and baselines.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from methods.proposed_method import ProposedMethod
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--output", default="result.json")
+    args = parser.parse_args()
+
+    config = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    method = ProposedMethod(config)
+    predictions = method.predict([{"sample": 1}, {"sample": 2}])
+    result = {
+        "run_id": "generated_sanity_run",
+        "dataset": config.get("datasets", ["placeholder"])[0],
+        "method": "proposed_method_scaffold",
+        "baseline": config.get("baselines", ["placeholder"])[0],
+        "metrics": {
+            "accuracy": None,
+            "compute_cost": method.cost_estimate()["compute_cost"],
+            "latency": method.cost_estimate()["latency"],
+        },
+        "num_predictions": len(predictions),
+        "claim_support": "none_real_dataset_required",
+    }
+    Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def _generated_code_markdown(paths: list[str]) -> str:
+    lines = [
+        "# Generated Code",
+        "",
+        "S02 generated an experiment scaffold. These files are required execution artifacts, "
+        "but they do not support empirical claims until run on real datasets against fair baselines.",
+        "",
+    ]
+    for path in paths:
+        lines.append(f"- {path}")
+    return "\n".join(lines) + "\n"
+
+
+def _is_unsupported_claim(claim: dict[str, Any]) -> bool:
+    status = str(claim.get("status", "")).lower()
+    support = claim.get("support")
+    if not support or str(support).strip().lower() in {"none", "n/a", "no evidence", "null"}:
+        return True
+    weak_markers = ["unsupported", "hypothesis", "provisional", "partial", "pending", "planned"]
+    return any(marker in status for marker in weak_markers)
 
 
 def _writing_round_markdown(round_id: int, focus: str, evidence: dict[str, Any], review: dict[str, Any]) -> str:

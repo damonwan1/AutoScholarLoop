@@ -36,6 +36,12 @@ class ShellExecutionBackend(ExecutionBackend):
 
     def execute(self, workspace: Path, plan: dict[str, Any]) -> dict[str, Any]:
         commands = self.commands or plan.get("commands", [])
+        if not commands and (workspace / "code" / "experiments" / "run_experiment.py").exists():
+            commands = [
+                "python code/experiments/run_experiment.py "
+                "--config code/experiments/config.json "
+                "--output code/experiments/result.json"
+            ]
         run_dir = workspace / "logs" / "shell_runs"
         run_dir.mkdir(parents=True, exist_ok=True)
         runs = []

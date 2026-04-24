@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -65,24 +66,93 @@ def write_latex_from_markdown(markdown_path: Path, tex_path: Path, paper_format_
     return tex_path
 
 
-def compile_latex(tex_path: Path, timeout: int = 60) -> dict[str, str | int | bool]:
-    if shutil.which("pdflatex") is None:
-        return {"compiled": False, "return_code": 127, "message": "pdflatex not found"}
-    result = subprocess.run(
-        ["pdflatex", "-interaction=nonstopmode", tex_path.name],
-        cwd=str(tex_path.parent),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+def compile_latex(tex_path: Path, timeout: int = 120) -> dict[str, str | int | bool]:
+    fmt = _read_format_key(tex_path.parent / "format_profile.json")
+    engine = _select_engine(fmt)
+    if engine is None:
+        return {
+            "compiled": False,
+            "return_code": 127,
+            "message": "No LaTeX engine found. Install latexmk, xelatex, or pdflatex.",
+            "pdf": "",
+        }
+    commands = _compile_commands(engine, tex_path.name, needs_bibtex=(tex_path.parent / "references.bib").exists())
+    logs = []
+    return_code = 0
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(tex_path.parent),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "compiled": False,
+                "return_code": 124,
+                "message": f"LaTeX command timed out: {' '.join(command)}",
+                "stdout": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+                "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+                "pdf": "",
+            }
+        return_code = result.returncode
+        logs.append(
+            {
+                "command": " ".join(command),
+                "return_code": result.returncode,
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+            }
+        )
+        # Keep going for LaTeX multi-pass when possible, but record failures.
     pdf_path = tex_path.with_suffix(".pdf")
     return {
         "compiled": pdf_path.exists(),
-        "return_code": result.returncode,
-        "stdout": result.stdout[-4000:],
-        "stderr": result.stderr[-4000:],
+        "return_code": return_code,
+        "engine": engine,
+        "passes": len(commands),
+        "stdout": "\n".join(item["stdout"] for item in logs)[-4000:],
+        "stderr": "\n".join(item["stderr"] for item in logs)[-4000:],
+        "commands": json.dumps(logs, ensure_ascii=False),
         "pdf": str(pdf_path) if pdf_path.exists() else "",
     }
+
+
+def _read_format_key(profile_path: Path) -> str:
+    if not profile_path.exists():
+        return "ieee"
+    try:
+        return json.loads(profile_path.read_text(encoding="utf-8")).get("key", "ieee")
+    except json.JSONDecodeError:
+        return "ieee"
+
+
+def _select_engine(format_key: str) -> str | None:
+    if shutil.which("latexmk"):
+        return "latexmk-xelatex" if format_key == "chinese_thesis" else "latexmk-pdflatex"
+    if format_key == "chinese_thesis" and shutil.which("xelatex"):
+        return "xelatex"
+    if shutil.which("pdflatex"):
+        return "pdflatex"
+    if shutil.which("xelatex"):
+        return "xelatex"
+    return None
+
+
+def _compile_commands(engine: str, tex_name: str, needs_bibtex: bool) -> list[list[str]]:
+    stem = Path(tex_name).stem
+    if engine == "latexmk-pdflatex":
+        return [["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", tex_name]]
+    if engine == "latexmk-xelatex":
+        return [["latexmk", "-xelatex", "-interaction=nonstopmode", "-halt-on-error", tex_name]]
+    base = [engine, "-interaction=nonstopmode", "-halt-on-error", tex_name]
+    commands = [base]
+    if needs_bibtex and shutil.which("bibtex"):
+        commands.append(["bibtex", stem])
+    commands.extend([base, base])
+    return commands
 
 
 def _escape(text: str) -> str:

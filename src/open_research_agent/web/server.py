@@ -37,10 +37,13 @@ STAGE_ORDER = [
 PREVIEW_FILES = [
     ("Field Map", "00_field_context/field_map.md"),
     ("Idea Report", "01_decision/IDEA_REPORT.md"),
+    ("Generated Code", "02_execution/GENERATED_CODE.md"),
     ("Execution Analysis", "02_execution/RESULTS_ANALYSIS.md"),
     ("Paper Plan", "03_writing/PAPER_PLAN.md"),
     ("Claim Evidence", "03_writing/claim_evidence_table.md"),
     ("Final Gate", "04_quality/final_gate.md"),
+    ("LaTeX Main", "paper/main.tex"),
+    ("Compile Report", "04_quality/compile_report.md"),
     ("Final Draft", "paper/final_draft.md"),
 ]
 
@@ -89,6 +92,7 @@ def save_config(payload: Dict[str, Any]):
         "model": payload.get("model") or "local-researcher",
         "base_url": payload.get("base_url") or None,
         "api_key": payload.get("api_key") or _read_config().get("api_key"),
+        "http_trust_env": bool(payload.get("http_trust_env", True)),
     }
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -116,6 +120,7 @@ async def create_run(
     model: str = Form(""),
     base_url: str = Form(""),
     api_key: str = Form(""),
+    http_trust_env: bool = Form(True),
     files: Optional[List[UploadFile]] = File(default=None),
 ):
     if paper_format not in FORMATS:
@@ -131,8 +136,10 @@ async def create_run(
         config["base_url"] = base_url
     if api_key:
         config["api_key"] = api_key
+    config["http_trust_env"] = http_trust_env
     if config.get("api_key"):
         os.environ["OPENAI_API_KEY"] = config["api_key"]
+    os.environ["AUTOSCHOLARLOOP_HTTP_TRUST_ENV"] = "1" if config.get("http_trust_env", True) else "0"
     if config.get("provider", "local") == "local" and not demo_mode:
         raise HTTPException(
             status_code=400,
@@ -221,6 +228,7 @@ def _run_job(
 ) -> None:
     record.status = "running"
     try:
+        os.environ["AUTOSCHOLARLOOP_HTTP_TRUST_ENV"] = "1" if config.get("http_trust_env", True) else "0"
         pipeline = build_default_pipeline(
             provider_name=config.get("provider", "local"),
             model=config.get("model", "local-researcher"),
@@ -302,7 +310,13 @@ def _get_job(job_id: str) -> JobRecord:
 
 def _read_config() -> Dict[str, Any]:
     if not CONFIG_PATH.exists():
-        return {"provider": "local", "model": "local-researcher", "base_url": None, "api_key": None}
+        return {
+            "provider": "local",
+            "model": "local-researcher",
+            "base_url": None,
+            "api_key": None,
+            "http_trust_env": True,
+        }
     return _read_json(CONFIG_PATH, default={})
 
 
@@ -312,6 +326,7 @@ def _public_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "model": config.get("model", "local-researcher"),
         "base_url": config.get("base_url"),
         "has_api_key": bool(config.get("api_key")),
+        "http_trust_env": bool(config.get("http_trust_env", True)),
     }
 
 

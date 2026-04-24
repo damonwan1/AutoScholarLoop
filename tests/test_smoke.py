@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from open_research_agent.core.pipeline import build_default_pipeline
+from open_research_agent.core.research_loop import _is_unsupported_claim
 from open_research_agent.core.workspace import ResearchWorkspace
 from open_research_agent.writing.paper_formats import FORMATS
 
@@ -32,3 +33,11 @@ def test_supported_paper_formats_run(tmp_path: Path) -> None:
         assert (tmp_path / key / "paper" / "main.tex").exists()
         profile = (tmp_path / key / "paper" / "format_profile.json").read_text(encoding="utf-8")
         assert f'"key": "{key}"' in profile
+
+
+def test_quality_gate_rejects_hypothesis_without_support() -> None:
+    assert _is_unsupported_claim({"claim": "x", "support": None, "status": "hypothesis"})
+    assert _is_unsupported_claim({"claim": "x", "support": "None", "status": "supported"})
+    assert not _is_unsupported_claim(
+        {"claim": "x", "support": "result table and generated artifact", "status": "supported"}
+    )

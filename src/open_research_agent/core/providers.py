@@ -99,6 +99,29 @@ class LocalHeuristicProvider(ModelProvider):
                 ],
                 "open_issues": ["real experiment execution backend is deferred"],
             }
+        if task == "code_generation":
+            return {
+                "files": [
+                    {
+                        "path": "code/methods/proposed_method.py",
+                        "content": (
+                            "class ProposedMethod:\n"
+                            "    def __init__(self, config):\n"
+                            "        self.config = config\n\n"
+                            "    def fit(self, train_data):\n"
+                            "        return self\n\n"
+                            "    def predict(self, batch):\n"
+                            "        return [0 for _ in batch]\n\n"
+                            "    def cost_estimate(self):\n"
+                            "        return {'compute_cost': 0.0, 'latency': 0.0}\n"
+                        ),
+                    }
+                ],
+                "commands": [
+                    "python code/experiments/run_experiment.py --config code/experiments/config.json --output code/experiments/result.json"
+                ],
+                "notes": "Local fallback code only; real provider should replace with domain-specific implementation.",
+            }
         if task == "synthesis":
             return {
                 "claims": [
@@ -109,6 +132,21 @@ class LocalHeuristicProvider(ModelProvider):
                     }
                 ],
                 "limitations": ["offline provider does not validate scientific novelty"],
+            }
+        if task == "paper_draft":
+            return {
+                "title": "Evidence-Grounded AUTO Research Loops",
+                "abstract": (
+                    "This paper draft describes a staged AUTO Research workflow. "
+                    "Empirical claims remain provisional until backed by executed experiments."
+                ),
+                "introduction": "The research problem is converted into auditable decisions, execution artifacts, and writing checkpoints.",
+                "related_work": "Related work should be populated from verified literature cards and citation audits.",
+                "method": "The method consists of field archiving, professor decision loops, executor-review loops, evidence-driven writing, and quality gates.",
+                "experiments": "The current demo run generates experiment code scaffolds but does not execute a real benchmark.",
+                "results": "No performance claim is accepted without result files and claim-evidence support.",
+                "limitations": ["Local demo mode is not a substitute for real experiments."],
+                "conclusion": "The workflow is a foundation for controlled, auditable research automation.",
             }
         if task == "review":
             return {
@@ -130,11 +168,17 @@ class LocalHeuristicProvider(ModelProvider):
 class OpenAICompatibleProvider(ModelProvider):
     def __init__(self, model: str, base_url: str | None = None):
         try:
+            import httpx
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError("Install with `pip install .[api]` to use API providers.") from exc
         self.model = model
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), base_url=base_url)
+        trust_env = os.getenv("AUTOSCHOLARLOOP_HTTP_TRUST_ENV", "1").lower() not in {"0", "false", "no"}
+        self.client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=base_url,
+            http_client=httpx.Client(trust_env=trust_env),
+        )
 
     def complete_json(
         self,
