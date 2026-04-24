@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import re
 from pathlib import Path
 
 from open_research_agent.writing.paper_formats import PaperFormat, get_paper_format
+from open_research_agent.writing.bibliography import BibliographyEntry, render_citation
 
 
-def markdown_to_simple_latex(markdown_text: str, paper_format: PaperFormat | None = None) -> str:
+_CITE_RE = re.compile(r"\[@([A-Za-z0-9:_-]+)\]")
+
+
+def markdown_to_simple_latex(
+    markdown_text: str,
+    paper_format: PaperFormat | None = None,
+    bibliography_entries: list[BibliographyEntry] | None = None,
+) -> str:
     fmt = paper_format or get_paper_format("ieee")
+    bibliography_entries = bibliography_entries or []
     lines = [
         fmt.latex_documentclass,
         r"\usepackage{hyperref}",
@@ -49,19 +59,37 @@ def markdown_to_simple_latex(markdown_text: str, paper_format: PaperFormat | Non
         elif line.startswith("### "):
             lines.append(r"\subsection{" + _escape(line[4:]) + "}")
         elif line.startswith("- "):
-            lines.append(r"\noindent $\bullet$ " + _escape(line[2:]) + r"\\")
+            lines.append(r"\noindent $\bullet$ " + _inline_to_latex(line[2:]) + r"\\")
         elif not line:
             lines.append("")
         else:
-            lines.append(_escape(line) + "\n")
+            lines.append(_inline_to_latex(line) + "\n")
+    if bibliography_entries:
+        lines.append(r"\begin{thebibliography}{99}")
+        for entry in bibliography_entries:
+            lines.append(r"\bibitem{" + _escape(entry.key) + "}")
+            lines.append(_escape(render_citation(entry)))
+        lines.append(r"\end{thebibliography}")
     lines.append(r"\end{document}")
     return "\n".join(lines)
 
 
-def write_latex_from_markdown(markdown_path: Path, tex_path: Path, paper_format_key: str = "ieee") -> Path:
+def write_latex_from_markdown(
+    markdown_path: Path,
+    tex_path: Path,
+    paper_format_key: str = "ieee",
+    bibliography_entries: list[BibliographyEntry] | None = None,
+) -> Path:
     tex_path.parent.mkdir(parents=True, exist_ok=True)
     text = markdown_path.read_text(encoding="utf-8")
-    tex_path.write_text(markdown_to_simple_latex(text, get_paper_format(paper_format_key)), encoding="utf-8")
+    tex_path.write_text(
+        markdown_to_simple_latex(
+            text,
+            get_paper_format(paper_format_key),
+            bibliography_entries=bibliography_entries,
+        ),
+        encoding="utf-8",
+    )
     return tex_path
 
 
@@ -99,3 +127,14 @@ def _escape(text: str) -> str:
     for src, dst in replacements.items():
         text = text.replace(src, dst)
     return text
+
+
+def _inline_to_latex(text: str) -> str:
+    converted = []
+    last = 0
+    for match in _CITE_RE.finditer(text):
+        converted.append(_escape(text[last:match.start()]))
+        converted.append(r"\cite{" + _escape(match.group(1)) + "}")
+        last = match.end()
+    converted.append(_escape(text[last:]))
+    return "".join(converted)
