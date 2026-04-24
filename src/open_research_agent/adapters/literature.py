@@ -8,16 +8,27 @@ from dataclasses import dataclass
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from open_research_agent.writing.bibliography import detect_language, normalize_entry
 
 @dataclass
 class PaperRecord:
     title: str
+    key: str = ""
     authors: str = ""
     venue: str = ""
     year: str = ""
     abstract: str = ""
     citations: int = 0
     url: str = ""
+    doi: str = ""
+    language: str = "en"
+    entry_type: str = "article"
+    source: str = "unknown"
+    source_id: str = ""
+    note: str = ""
+
+    def to_bibliography_dict(self) -> dict[str, str | int]:
+        return normalize_entry(self.__dict__).to_dict()
 
 
 class LiteratureProvider(ABC):
@@ -30,6 +41,7 @@ class LocalLiteratureProvider(LiteratureProvider):
     def search(self, query: str, limit: int = 10) -> list[PaperRecord]:
         if not query:
             return []
+        language = detect_language(query)
         return [
             PaperRecord(
                 title=f"Provided or local reference related to {query}",
@@ -37,6 +49,10 @@ class LocalLiteratureProvider(LiteratureProvider):
                 venue="User supplied context",
                 year="unknown",
                 abstract="Placeholder record used when no external literature engine is configured.",
+                language=language,
+                source="local",
+                entry_type="misc",
+                note="Placeholder record used without an external literature engine.",
             )
         ][:limit]
 
@@ -72,6 +88,9 @@ class SemanticScholarProvider(LiteratureProvider):
                     abstract=item.get("abstract") or "",
                     citations=int(item.get("citationCount") or 0),
                     url=item.get("url") or "",
+                    language=detect_language(item.get("title") or "", authors, item.get("venue") or ""),
+                    source="semanticscholar",
+                    source_id=item.get("paperId") or "",
                 )
             )
         return records
@@ -107,6 +126,10 @@ class OpenAlexProvider(LiteratureProvider):
                     abstract=item.get("abstract") or "",
                     citations=int(item.get("cited_by_count") or 0),
                     url=item.get("id") or "",
+                    doi=((item.get("ids") or {}).get("doi") or ""),
+                    language=detect_language(item.get("title") or "", authors, source),
+                    source="openalex",
+                    source_id=item.get("id") or "",
                 )
             )
         return records
