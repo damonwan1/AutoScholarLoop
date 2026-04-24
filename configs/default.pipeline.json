@@ -1,0 +1,20 @@
+{
+  "schema": "autoscholarloop.pipeline.v1",
+  "version": "0.1.0",
+  "provider": {
+    "name": "local",
+    "model": "local-researcher"
+  },
+  "stages": [
+    "intake",
+    "ideation",
+    "novelty",
+    "planning",
+    "execution",
+    "synthesis",
+    "drafting",
+    "review",
+    "revision",
+    "release"
+  ]
+}

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoscholarloop"
+version = "0.1.0"
+description = "Multi-agent AUTO Research loop for idea discovery, execution, paper writing, quality audit, and Web-based observation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE.md"}
+authors = [
+  {name = "CAS CNIC, Chinese Academy of Sciences"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+api = ["openai>=1.0.0"]
+web = ["fastapi>=0.110.0", "uvicorn[standard]>=0.27.0", "python-multipart>=0.0.9"]
+dev = ["pytest>=8.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+autoscholarloop = "open_research_agent.cli:main"
+new-ai-scientist = "open_research_agent.cli:main"

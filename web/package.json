@@ -1,0 +1,17 @@
+{
+  "name": "autoscholarloop-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^2.3.4",
+    "vite": "^2.9.18",
+    "vue": "^3.2.47"
+  },
+  "devDependencies": {}
+}

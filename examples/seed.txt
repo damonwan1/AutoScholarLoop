@@ -1,0 +1,1 @@
+I want to explore how automated research agents can reduce hallucinated claims in paper writing by forcing every claim to reference an artifact.
