@@ -62,6 +62,12 @@ class ResearchWorkspace:
         path.write_text(text, encoding="utf-8")
         return str(path)
 
+    def write_text(self, folder: str, filename: str, text: str) -> str:
+        path = self.root / folder / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
     def manifest(self) -> dict[str, Any]:
         return json.loads(self.manifest_path.read_text(encoding="utf-8"))
 
