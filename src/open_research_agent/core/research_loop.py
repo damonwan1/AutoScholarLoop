@@ -13,6 +13,15 @@ from open_research_agent.core.workspace import ResearchWorkspace
 from open_research_agent.writing.latex_paper import compile_latex, write_latex_from_markdown
 from open_research_agent.writing.markdown_paper import build_markdown_paper
 from open_research_agent.writing.paper_formats import get_paper_format, write_format_profile
+from open_research_agent.writing.bibliography import (
+    BibliographyEntry,
+    bibliography_to_bibtex,
+    bibliography_to_json,
+    bibliography_to_markdown,
+    dedupe_entries,
+    extract_cite_keys,
+    parse_reference_hint,
+)
 
 
 class ResearchGroupLoopPipeline:
@@ -82,8 +91,13 @@ class ResearchGroupLoopPipeline:
         )
         query = context["seed"]
         literature_hits = self.services["literature"].search(query, limit=8)
+        bibliography_entries = dedupe_entries(
+            [parse_reference_hint(reference) for reference in context.get("references", [])]
+            + [BibliographyEntry(**record.to_bibliography_dict()) for record in literature_hits]
+        )
         context["field_brief"] = brief
         context["literature_hits"] = [record.__dict__ for record in literature_hits]
+        context["bibliography_entries"] = [entry.to_dict() for entry in bibliography_entries]
 
         field_map = (
             f"# Field Map\n\n"
@@ -115,6 +129,18 @@ class ResearchGroupLoopPipeline:
             write_canonical(workspace, "00_field_context", "method_map.md", method_map),
             write_canonical(workspace, "00_field_context", "dataset_baseline_map.md", dataset_map),
             write_canonical(workspace, "00_field_context", "evidence_bank.md", evidence_bank),
+            write_canonical(
+                workspace,
+                "00_field_context",
+                "reference_inventory.md",
+                bibliography_to_markdown(bibliography_entries),
+            ),
+            write_canonical(
+                workspace,
+                "00_field_context",
+                "reference_inventory.json",
+                bibliography_to_json(bibliography_entries),
+            ),
             write_checkpoint(
                 workspace,
                 folder="00_field_context",
@@ -299,12 +325,19 @@ class ResearchGroupLoopPipeline:
         )
         context["evidence"] = evidence
         paper_format = get_paper_format(context.get("paper_format", "ieee"))
+        bibliography_entries = [
+            BibliographyEntry(**entry)
+            for entry in context.get("bibliography_entries", [])
+        ]
         paper = build_markdown_paper(context)
         draft_path = workspace.write_markdown("03_writing", "draft.md", paper)
         workspace.write_markdown("paper", "draft.md", paper)
+        references_bib = workspace.write_text("paper", "references.bib", bibliography_to_bibtex(bibliography_entries))
+        workspace.write_text("03_writing", "references.bib", bibliography_to_bibtex(bibliography_entries))
+        workspace.write_text("paper", "references.json", bibliography_to_json(bibliography_entries))
         write_format_profile(workspace.root / "paper" / "format_profile.json", paper_format)
         write_canonical(workspace, "03_writing", "format_profile.md", paper_format.to_markdown())
-        paths = [draft_path, str(workspace.root / "paper" / "format_profile.json")]
+        paths = [draft_path, str(workspace.root / "paper" / "format_profile.json"), references_bib]
         for round_id in range(1, self.policy.writing_rounds + 1):
             if round_id == 1:
                 focus = "paper outline and narrative"
@@ -346,14 +379,17 @@ class ResearchGroupLoopPipeline:
         write_canonical(workspace, "03_writing", "PAPER_PLAN.md", _paper_plan_markdown(context))
         write_canonical(workspace, "03_writing", "paper_outline.md", _paper_outline_markdown(context))
         write_canonical(workspace, "03_writing", "figure_plan.md", _figure_plan_markdown(context))
+        write_canonical(workspace, "03_writing", "reference_inventory.md", bibliography_to_markdown(bibliography_entries))
         write_canonical(workspace, "03_writing", "AUTO_REVIEW.md", "See S03_RXX_draft_update.md files for reviewer-style critique.\n")
         write_canonical(workspace, "03_writing", "PAPER_IMPROVEMENT_LOG.md", "Writing-review loop completed inside S03 checkpoints.\n")
         write_canonical(workspace, "03_writing", "review_log.md", "See S03_RXX_draft_update.md files.\n")
         context["draft_path"] = str(workspace.root / "paper" / "draft.md")
+        context["references_bib_path"] = str(workspace.root / "paper" / "references.bib")
         tex_path = write_latex_from_markdown(
             Path(context["draft_path"]),
             workspace.root / "paper" / "main.tex",
             paper_format_key=paper_format.key,
+            bibliography_entries=bibliography_entries,
         )
         context["latex_path"] = str(tex_path)
         if self.services.get("compile_pdf"):
@@ -375,18 +411,27 @@ class ResearchGroupLoopPipeline:
         unsupported = [
             item for item in evidence.get("claims", []) if "unsupported" in item.get("status", "")
         ]
+        bibliography_entries = [
+            BibliographyEntry(**entry)
+            for entry in context.get("bibliography_entries", [])
+        ]
+        draft_text = Path(context["draft_path"]).read_text(encoding="utf-8")
+        cited_keys = extract_cite_keys(draft_text)
+        citation_audit = _build_citation_audit(bibliography_entries, cited_keys)
+        citation_status = "pass" if citation_audit["status"] == "pass" else "revise"
         gate = {
-            "decision": "submission_candidate" if not unsupported else "revise_writing",
-            "return_to": None if not unsupported else "S03",
+            "decision": "submission_candidate" if (not unsupported and citation_status == "pass") else "revise_writing",
+            "return_to": None if (not unsupported and citation_status == "pass") else "S03",
             "unsupported_claims": unsupported,
             "checks": {
                 "novelty": "pass_with_local_evidence",
-                "citation": "needs_real_bibtex_loop" if not context.get("literature_hits") else "pass",
+                "citation": citation_audit["status"],
                 "reproducibility": "pass_for_recorded_artifacts",
                 "claim_evidence": "pass" if not unsupported else "fail",
             },
         }
         context["quality_gate"] = gate
+        context["citation_audit"] = citation_audit
         paths = []
         write_canonical(workspace, "04_quality", "capability_contracts.md", contracts_markdown("S04"))
         for artifact, title, body in [
@@ -410,8 +455,8 @@ class ResearchGroupLoopPipeline:
                 )
             )
             write_canonical(workspace, "04_quality", f"{artifact}.md", body)
-        write_canonical(workspace, "04_quality", "CITATION_AUDIT.md", _citation_audit_markdown(gate))
-        write_canonical(workspace, "04_quality", "CITATION_AUDIT.json", _citation_audit_json(gate))
+        write_canonical(workspace, "04_quality", "CITATION_AUDIT.md", _citation_audit_markdown(gate, citation_audit))
+        write_canonical(workspace, "04_quality", "CITATION_AUDIT.json", _citation_audit_json(gate, citation_audit))
         write_canonical(workspace, "04_quality", "compile_report.md", _compile_report_markdown(context))
         write_canonical(workspace, "04_quality", "overleaf_sync.md", _overleaf_sync_markdown())
         final_draft = Path(context["draft_path"]).read_text(encoding="utf-8")
@@ -685,27 +730,38 @@ def _final_gate_markdown(gate: dict[str, Any]) -> str:
     )
 
 
-def _citation_audit_markdown(gate: dict[str, Any]) -> str:
+def _citation_audit_markdown(gate: dict[str, Any], audit: dict[str, Any]) -> str:
+    summary = audit.get("summary", {})
+    issues = audit.get("issues", [])
+    warnings = audit.get("warnings", [])
+    issue_lines = "\n".join(f"- {issue}" for issue in issues) if issues else "- No blocking citation issues detected."
+    warning_lines = "\n".join(f"- {warning}" for warning in warnings) if warnings else "- No metadata warnings."
     return (
         "# Citation Audit Report\n\n"
         "## Summary\n\n"
         f"- Verdict: {gate.get('checks', {}).get('citation')}\n"
-        "- KEEP: provisional local references\n"
-        "- FIX: real BibTeX loop pending\n"
-        "- REPLACE: none detected by local provider\n"
-        "- REMOVE: none detected by local provider\n"
+        f"- Total entries: {summary.get('total_entries', 0)}\n"
+        f"- Cited keys: {summary.get('cited_keys', 0)}\n"
+        f"- Uncited entries: {summary.get('uncited_entries', 0)}\n"
+        f"- Duplicate titles: {summary.get('duplicate_titles', 0)}\n"
+        f"- Metadata issues: {summary.get('metadata_issues', 0)}\n"
         "\n"
         "## Priority Fixes\n\n"
-        "- Run real reference integrity audit after the manuscript writer creates references.bib.\n"
+        f"{issue_lines}\n"
+        "\n"
+        "## Warnings\n\n"
+        f"{warning_lines}\n"
     )
 
 
-def _citation_audit_json(gate: dict[str, Any]) -> str:
+def _citation_audit_json(gate: dict[str, Any], audit: dict[str, Any]) -> str:
     payload = {
-        "summary": {"KEEP": 0, "FIX": 1, "REPLACE": 0, "REMOVE": 0},
+        "summary": audit.get("summary", {}),
         "status": gate.get("checks", {}).get("citation"),
-        "entries": [],
-        "note": "Local provisional audit. Real reference integrity audit requires bibliography and web verification.",
+        "entries": audit.get("entries", []),
+        "issues": audit.get("issues", []),
+        "warnings": audit.get("warnings", []),
+        "note": "Bibliography entries were normalized locally. External source verification can further strengthen metadata fidelity.",
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
@@ -737,3 +793,62 @@ def _overleaf_sync_markdown() -> str:
         "- reason: no Overleaf sync configuration was provided\n"
         "- fallback: local release package is authoritative\n"
     )
+
+
+def _build_citation_audit(entries: list[BibliographyEntry], cited_keys: list[str]) -> dict[str, Any]:
+    key_set = {entry.key for entry in entries}
+    cited_unique = sorted(set(cited_keys))
+    missing_cited_keys = [key for key in cited_unique if key not in key_set]
+    title_counts: dict[str, int] = {}
+    metadata_issues = 0
+    warnings = []
+    entry_reports = []
+    for entry in entries:
+        title_key = entry.title.casefold()
+        title_counts[title_key] = title_counts.get(title_key, 0) + 1
+        issues = []
+        if not entry.title or entry.title == "Untitled reference":
+            issues.append("missing_title")
+        if not entry.year:
+            issues.append("missing_year")
+        if not entry.authors:
+            issues.append("missing_authors")
+        if not (entry.url or entry.doi or entry.source_id):
+            issues.append("missing_locator")
+        metadata_issues += len(issues)
+        entry_reports.append(
+            {
+                "key": entry.key,
+                "title": entry.title,
+                "year": entry.year,
+                "authors": entry.authors,
+                "language": entry.language,
+                "source": entry.source,
+                "cited": entry.key in cited_unique,
+                "issues": issues,
+            }
+        )
+    duplicate_titles = sum(1 for count in title_counts.values() if count > 1)
+    issues = []
+    if missing_cited_keys:
+        issues.append(f"Missing cite keys in bibliography: {', '.join(missing_cited_keys)}.")
+    if duplicate_titles:
+        warnings.append(f"Found {duplicate_titles} duplicated normalized title groups in the bibliography.")
+    if metadata_issues:
+        warnings.append(f"Found {metadata_issues} metadata completeness issues across bibliography entries.")
+    if not cited_unique:
+        issues.append("No inline citations were found in the manuscript draft.")
+    status = "pass" if not issues else "revise"
+    return {
+        "status": status,
+        "summary": {
+            "total_entries": len(entries),
+            "cited_keys": len(cited_unique),
+            "uncited_entries": sum(1 for entry in entries if entry.key not in cited_unique),
+            "duplicate_titles": duplicate_titles,
+            "metadata_issues": metadata_issues,
+        },
+        "entries": entry_reports,
+        "issues": issues,
+        "warnings": warnings,
+    }
