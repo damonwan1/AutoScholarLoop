@@ -67,7 +67,10 @@ class ResearchGroupLoopPipeline:
             if context.get("research_state") == "submission_candidate":
                 break
             next_stage = context.get("quality_gate", {}).get("return_to") or "S01"
-        self._release(workspace, context)
+        if context.get("research_state") == "submission_candidate":
+            self._release(workspace, context)
+        else:
+            self._halt_for_revision(workspace, context)
         return context
 
     def _record(self, workspace: ResearchWorkspace, result: StageResult) -> None:
@@ -391,13 +394,28 @@ class ResearchGroupLoopPipeline:
         )
         context["latex_path"] = str(tex_path)
         if self.services.get("compile_pdf"):
-            context["compile_result"] = compile_latex(tex_path)
+            try:
+                context["compile_result"] = compile_latex(tex_path)
+            except Exception as exc:  # Keep writing/audit alive even if TeX tooling misbehaves.
+                context["compile_result"] = {
+                    "compiled": False,
+                    "return_code": 1,
+                    "message": f"LaTeX compile failed but pipeline continued: {exc}",
+                    "pdf": str(tex_path.with_suffix(".pdf")) if tex_path.with_suffix(".pdf").exists() else "",
+                }
         paths.append(
             workspace.write_artifact(
                 Artifact(
                     "S03_writing_review_loop",
                     "draft",
-                    {"context": dict(context), "capability_contracts": contracts_json("S03")},
+                    {
+                        "draft_path": context.get("draft_path"),
+                        "latex_path": context.get("latex_path"),
+                        "compile_result": context.get("compile_result"),
+                        "paper_format": context.get("paper_format"),
+                        "evidence": context.get("evidence"),
+                        "capability_contracts": contracts_json("S03"),
+                    },
                 )
             )
         )
@@ -484,6 +502,35 @@ class ResearchGroupLoopPipeline:
         release_path = workspace.write_markdown("release", "README.md", release_md)
         artifact_path = workspace.write_artifact(Artifact("release", "release_package", package))
         self._record(workspace, StageResult.ok("release", [release_path, artifact_path], release=package))
+
+    def _halt_for_revision(self, workspace: ResearchWorkspace, context: PipelineContext) -> None:
+        gate = context.get("quality_gate", {})
+        package = {
+            "state": context.get("research_state"),
+            "return_to": gate.get("return_to"),
+            "final_draft": context.get("final_draft_path"),
+            "latex": context.get("latex_path"),
+            "pdf": context.get("compile_result", {}).get("pdf") if context.get("compile_result") else "",
+            "manifest": str(workspace.manifest_path),
+            "checkpoint_state": str(workspace.root / "00_field_context" / "checkpoint_state.md"),
+            "progress_index": str(workspace.root / "00_field_context" / "progress_index.md"),
+            "unsupported_claims": gate.get("unsupported_claims", []),
+        }
+        revision_md = (
+            "# Revision Required\n\n"
+            f"- State: {package['state']}\n"
+            f"- Return to: {package['return_to']}\n"
+            f"- Final draft: {package['final_draft']}\n"
+            f"- LaTeX: {package['latex']}\n"
+            f"- PDF: {package['pdf']}\n"
+            f"- Manifest: {package['manifest']}\n\n"
+            "## Unsupported Claims\n\n"
+            + "\n".join(f"- {claim.get('claim')}" for claim in package["unsupported_claims"])
+            + "\n"
+        )
+        path = workspace.write_markdown("release", "REVISION_REQUIRED.md", revision_md)
+        artifact_path = workspace.write_artifact(Artifact("needs_revision", "revision_package", package))
+        self._record(workspace, StageResult.ok("needs_revision", [path, artifact_path], revision=package))
 
 
 def _decision_round_markdown(round_id: int, focus: str, response: dict[str, Any]) -> str:
@@ -702,9 +749,9 @@ def _write_experiment_scaffold(
     }
     for item in (code_generation or {}).get("files", []):
         rel = str(item.get("path", "")).replace("\\", "/").lstrip("/")
-        if not rel or ".." in Path(rel).parts:
+        path = _safe_generated_code_path(code_root, rel)
+        if path is None:
             continue
-        path = workspace.root / rel
         if path.suffix not in {".py", ".json", ".yaml", ".yml", ".md", ".txt", ".sh", ".ps1"}:
             continue
         files[path] = str(item.get("content", ""))
@@ -714,9 +761,27 @@ def _write_experiment_scaffold(
     files[code_root / "run_commands.json"] = json.dumps({"commands": commands}, indent=2, ensure_ascii=False)
     paths = []
     for path, content in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         paths.append(str(path))
     return paths
+
+
+def _safe_generated_code_path(code_root: Path, rel: str) -> Path | None:
+    if not rel:
+        return None
+    rel_path = Path(rel)
+    if rel_path.is_absolute() or ".." in rel_path.parts:
+        return None
+    if rel_path.parts and rel_path.parts[0] == "code":
+        rel_path = Path(*rel_path.parts[1:]) if len(rel_path.parts) > 1 else Path("README.md")
+    if not rel_path.suffix:
+        rel_path = rel_path.with_suffix(".py")
+    target = (code_root / rel_path).resolve()
+    root = code_root.resolve()
+    if root not in target.parents and target != root:
+        return None
+    return target
 
 
 def _proposed_method_py() -> str:

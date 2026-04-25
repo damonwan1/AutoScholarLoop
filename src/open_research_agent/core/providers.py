@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -193,18 +194,31 @@ class OpenAICompatibleProvider(ModelProvider):
             "task": task,
             "context": context,
             "schema_hint": schema_hint,
-            "instruction": "Return valid JSON only. Do not include markdown fences.",
+            "instruction": (
+                "Return valid JSON only. Do not include markdown fences. "
+                "Never invent experimental numbers, citations, datasets, or completed baselines. "
+                "If result files or backend logs do not support a claim, mark the claim as unsupported or hypothesis. "
+                "For code_generation, create runnable local Python code plus commands that can execute on the current machine. "
+                "For paper_draft, write only evidence-grounded results and move unsupported claims to limitations or future work."
+            ),
         }
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": "You are a rigorous AUTO Research agent."},
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a rigorous AUTO Research agent. You operate like a research group, "
+                        "but every manuscript claim must be backed by explicit evidence artifacts. "
+                        "Fabricated metrics are a critical failure."
+                    ),
+                },
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
             ],
             temperature=0.4,
         )
         content = response.choices[0].message.content or "{}"
-        return json.loads(content)
+        return _safe_json_loads(content, task=task, role=role, schema_hint=schema_hint)
 
 
 def build_provider(name: str, model: str, base_url: str | None = None) -> ModelProvider:
@@ -213,3 +227,75 @@ def build_provider(name: str, model: str, base_url: str | None = None) -> ModelP
     if name == "openai-compatible":
         return OpenAICompatibleProvider(model=model, base_url=base_url)
     raise ValueError(f"Unsupported provider: {name}")
+
+
+def _safe_json_loads(content: str, *, task: str, role: str, schema_hint: dict[str, Any]) -> dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"```$", "", text).strip()
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start : end + 1])
+    for candidate in candidates:
+        try:
+            loaded = json.loads(candidate)
+            return loaded if isinstance(loaded, dict) else {"items": loaded}
+        except json.JSONDecodeError:
+            continue
+    return _fallback_response(task=task, role=role, schema_hint=schema_hint, raw=content)
+
+
+def _fallback_response(*, task: str, role: str, schema_hint: dict[str, Any], raw: str) -> dict[str, Any]:
+    note = (
+        f"Model response for {role}/{task} was not valid JSON. "
+        "AutoScholarLoop converted this step into a recoverable checkpoint."
+    )
+    if task == "planning":
+        return {
+            "objective": "Recover from malformed model planning output and continue with a minimal local experiment.",
+            "work_packages": ["run local sanity experiment", "record failure details", "return to professor review"],
+            "success_metrics": ["command completion", "parseable result file"],
+            "parser_warning": note,
+        }
+    if task == "code_generation":
+        return {
+            "files": [],
+            "commands": [
+                "python code/experiments/run_experiment.py --config code/experiments/config.json --output code/experiments/result.json"
+            ],
+            "notes": note,
+            "parser_warning": note,
+        }
+    if task == "execution":
+        return {
+            "runs": [{"name": "recovered_execution", "status": "failed", "observation": note}],
+            "open_issues": [note, "Repeat S02 with stricter code-generation prompt or inspect generated commands."],
+            "parser_warning": note,
+        }
+    if task == "synthesis":
+        return {
+            "claims": [
+                {
+                    "claim": "The current run produced only partial execution evidence.",
+                    "support": "execution logs and parser recovery note",
+                    "status": "unsupported",
+                }
+            ],
+            "limitations": [note],
+        }
+    if task == "paper_draft":
+        return {
+            "title": "Recovered AutoScholarLoop Draft",
+            "abstract": "The run produced partial artifacts but did not produce enough valid evidence for a scientific claim.",
+            "introduction": "This draft is a recovery artifact generated after malformed model output.",
+            "related_work": "Related work must be regenerated after the execution loop is repaired.",
+            "method": "The proposed method is not yet validated.",
+            "experiments": "Execution did not complete reliably.",
+            "results": "No validated result is available.",
+            "limitations": [note],
+            "conclusion": "Return to S02 for another execution loop.",
+        }
+    return {"note": note, "schema_hint": schema_hint, "raw_preview": raw[:1000]}

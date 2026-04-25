@@ -157,7 +157,8 @@ npm run dev
 The Web console supports:
 
 - first-run large model API configuration;
-- DeepSeek preset for `deepseek-chat` and `https://api.deepseek.com/v1`;
+- provider presets for Local demo, DeepSeek, OpenAI, and custom
+  OpenAI-compatible APIs;
 - optional system proxy bypass for environments where `httpx` fails through
   inherited proxy settings;
 - research direction and target venue input;

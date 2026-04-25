@@ -104,7 +104,7 @@ npm run dev
 Web 支持：
 
 - 首次大模型 API 配置；
-- DeepSeek 预设：自动填入 `deepseek-chat` 和 `https://api.deepseek.com/v1`；
+- 提供方预设：Local demo、DeepSeek、OpenAI 和自定义 OpenAI-compatible API；
 - 可关闭系统代理环境变量读取，用于解决部分环境下 `httpx` 连接 DeepSeek 失败的问题；
 - 中英文界面切换；
 - 研究方向、目标会议/期刊输入；

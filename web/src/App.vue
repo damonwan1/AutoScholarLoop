@@ -12,11 +12,11 @@ const zh = {
   configured: '\u6a21\u578b\u5df2\u914d\u7f6e',
   configure: '\u914d\u7f6e\u6a21\u578b API',
   setup: '\u5927\u6a21\u578b API \u914d\u7f6e',
+  providerPreset: '\u63d0\u4f9b\u65b9\u9884\u8bbe',
   provider: '\u63d0\u4f9b\u65b9',
   model: '\u6a21\u578b',
   baseUrl: 'Base URL',
   apiKey: 'API Key',
-  deepseekPreset: 'DeepSeek \u9884\u8bbe',
   trustEnv: '\u4f7f\u7528\u7cfb\u7edf\u4ee3\u7406\u73af\u5883\u53d8\u91cf',
   save: '\u4fdd\u5b58\u914d\u7f6e',
   later: '\u7a0d\u540e\u518d\u8bf4',
@@ -39,6 +39,11 @@ const zh = {
   start: '\u542f\u52a8 Auto Loop',
   starting: '\u542f\u52a8\u4e2d...',
   observability: '\u79d1\u7814\u7ec4\u8fdb\u5c55',
+  currentAction: '\u5f53\u524d\u52a8\u4f5c',
+  liveLog: '\u5c55\u5f00\u8fd0\u884c\u65e5\u5fd7',
+  hideLog: '\u6536\u8d77\u8fd0\u884c\u65e5\u5fd7',
+  downloads: '\u4e0b\u8f7d\u4ea7\u7269',
+  noDownloads: '\u5b8c\u6210 LaTeX/PDF \u751f\u6210\u540e\u4f1a\u5728\u8fd9\u91cc\u663e\u793a\u3002',
   emptyStages: '\u4efb\u52a1\u542f\u52a8\u540e\uff0c\u8fd9\u91cc\u4f1a\u663e\u793a S00 \u5efa\u6863\u3001S01 \u51b3\u7b56\u3001S02 \u6267\u884c\u3001S03 \u5199\u4f5c\u3001S04 \u5ba1\u8ba1\u548c Release \u72b6\u6001\u3002',
   checkpoints: '\u9636\u6bb5\u6027\u7ed3\u679c',
   selectCheckpoint: '\u9009\u62e9\u4e00\u4e2a checkpoint \u67e5\u770b\u5185\u5bb9\u3002',
@@ -66,11 +71,11 @@ const en = {
   configured: 'Model Configured',
   configure: 'Configure Model API',
   setup: 'Large Model API Setup',
+  providerPreset: 'Provider Preset',
   provider: 'Provider',
   model: 'Model',
   baseUrl: 'Base URL',
   apiKey: 'API Key',
-  deepseekPreset: 'DeepSeek Preset',
   trustEnv: 'Use system proxy environment variables',
   save: 'Save Configuration',
   later: 'Later',
@@ -93,6 +98,11 @@ const en = {
   start: 'Start Auto Loop',
   starting: 'Starting...',
   observability: 'Research Group Progress',
+  currentAction: 'Current Action',
+  liveLog: 'Expand Runtime Log',
+  hideLog: 'Collapse Runtime Log',
+  downloads: 'Downloads',
+  noDownloads: 'LaTeX/PDF artifacts will appear here after they are generated.',
   emptyStages: 'After launch, this area shows S00 archive, S01 decision, S02 execution, S03 writing, S04 audit, and release status.',
   checkpoints: 'Stage Checkpoints',
   selectCheckpoint: 'Select a checkpoint to preview.',
@@ -146,6 +156,41 @@ const formats = computed(() => [
   { key: 'chinese_thesis', label: lang.value === 'en' ? 'Chinese Thesis' : '\u4e2d\u6587\u5b66\u4f4d\u8bba\u6587', note: lang.value === 'en' ? 'chapter-based thesis draft' : '\u7ae0\u8282\u5f0f\u5b66\u4f4d\u8bba\u6587\u8349\u7a3f' },
 ])
 
+const providerPresets = [
+  {
+    key: 'local',
+    label: 'Local demo',
+    provider: 'local',
+    model: 'local-researcher',
+    baseUrl: '',
+    trustEnv: true,
+  },
+  {
+    key: 'deepseek',
+    label: 'DeepSeek',
+    provider: 'openai-compatible',
+    model: 'deepseek-chat',
+    baseUrl: 'https://api.deepseek.com/v1',
+    trustEnv: false,
+  },
+  {
+    key: 'openai',
+    label: 'OpenAI',
+    provider: 'openai-compatible',
+    model: 'gpt-4.1',
+    baseUrl: 'https://api.openai.com/v1',
+    trustEnv: true,
+  },
+  {
+    key: 'custom',
+    label: 'Custom OpenAI-compatible',
+    provider: 'openai-compatible',
+    model: '',
+    baseUrl: '',
+    trustEnv: true,
+  },
+]
+
 const stageText = {
   S00_field_archive: { en: 'S00 Field Archive', zh: 'S00 \u9886\u57df\u5efa\u6863' },
   S01_professor_decision_loop: { en: 'S01 Professor Decision', zh: 'S01 \u6559\u6388\u51b3\u7b56' },
@@ -163,9 +208,11 @@ const statusText = {
   failed: { en: 'failed', zh: '\u5931\u8d25' },
   pending: { en: 'pending', zh: '\u7b49\u5f85\u4e2d' },
   active: { en: 'active', zh: '\u8fdb\u884c\u4e2d' },
+  needs_revision: { en: 'needs revision', zh: '\u9700\u8981\u56de\u9000\u4fee\u6539' },
 }
 
 const config = reactive({
+  preset: 'local',
   provider: 'local',
   model: 'local-researcher',
   base_url: '',
@@ -193,6 +240,7 @@ const selectedFiles = ref([])
 const runState = ref(null)
 const activeArtifact = ref(null)
 const artifactText = ref('')
+const logOpen = ref(false)
 const loading = ref(false)
 const configOpen = ref(false)
 const message = ref('')
@@ -226,6 +274,7 @@ async function loadConfig() {
     const response = await fetch(`${API_BASE}/api/config`)
     const data = await response.json()
     Object.assign(config, {
+      preset: inferPreset(data),
       provider: data.provider || 'local',
       model: data.model || 'local-researcher',
       base_url: data.base_url || '',
@@ -259,14 +308,20 @@ function onFiles(event) {
   selectedFiles.value = Array.from(event.target.files || [])
 }
 
-function applyDeepSeekPreset() {
-  Object.assign(config, {
-    provider: 'openai-compatible',
-    model: 'deepseek-chat',
-    base_url: 'https://api.deepseek.com/v1',
-    http_trust_env: false,
-  })
-  configOpen.value = true
+function inferPreset(data) {
+  if ((data.provider || 'local') === 'local') return 'local'
+  if (data.model === 'deepseek-chat' || data.base_url === 'https://api.deepseek.com/v1') return 'deepseek'
+  if ((data.base_url || '').includes('api.openai.com')) return 'openai'
+  return 'custom'
+}
+
+function applyProviderPreset() {
+  const preset = providerPresets.find((item) => item.key === config.preset)
+  if (!preset) return
+  config.provider = preset.provider
+  config.model = preset.model
+  config.base_url = preset.baseUrl
+  config.http_trust_env = preset.trustEnv
 }
 
 function applyPreset() {
@@ -318,7 +373,7 @@ async function startRun() {
 async function pollRun(jobId) {
   const response = await fetch(`${API_BASE}/api/runs/${jobId}`)
   runState.value = await response.json()
-  if (['completed', 'failed'].includes(runState.value.status) && pollTimer) {
+  if (['completed', 'failed', 'needs_revision'].includes(runState.value.status) && pollTimer) {
     window.clearInterval(pollTimer)
     pollTimer = null
   }
@@ -330,6 +385,11 @@ async function openArtifact(item) {
   const params = new URLSearchParams({ path: item.path })
   const response = await fetch(`${API_BASE}/api/runs/${runState.value.job_id}/artifact?${params}`)
   artifactText.value = await response.text()
+}
+
+function downloadUrl(item) {
+  const params = new URLSearchParams({ path: item.path })
+  return `${API_BASE}/api/runs/${runState.value.job_id}/download?${params}`
 }
 </script>
 
@@ -355,6 +415,11 @@ async function openArtifact(item) {
         <h2>{{ t.setup }}</h2>
       </div>
       <div class="grid two">
+        <label>{{ t.providerPreset }}
+          <select v-model="config.preset" @change="applyProviderPreset">
+            <option v-for="preset in providerPresets" :key="preset.key" :value="preset.key">{{ preset.label }}</option>
+          </select>
+        </label>
         <label :title="tip('provider')">{{ t.provider }}
           <select v-model="config.provider">
             <option value="local">Local deterministic demo</option>
@@ -368,7 +433,6 @@ async function openArtifact(item) {
         </label>
       </div>
       <div class="actions compact-actions">
-        <button class="ghost" type="button" @click="applyDeepSeekPreset">{{ t.deepseekPreset }}</button>
         <label class="checkline config-check">
           <input v-model="config.http_trust_env" type="checkbox" />
           <span>{{ t.trustEnv }}</span>
@@ -459,6 +523,37 @@ async function openArtifact(item) {
             </div>
           </article>
           <p v-if="!stageGroups.length" class="empty">{{ t.emptyStages }}</p>
+        </div>
+        <div v-if="runState" class="runtime-panel">
+          <div>
+            <span>{{ t.currentAction }}</span>
+            <strong>{{ runState.current_action }}</strong>
+          </div>
+          <button class="ghost compact" type="button" @click="logOpen = !logOpen">
+            {{ logOpen ? t.hideLog : t.liveLog }}
+          </button>
+          <div v-if="logOpen" class="runtime-log">
+            <button
+              v-for="event in runState.logs"
+              :key="`${event.time}-${event.stage}-${event.message}`"
+              :class="event.status"
+              type="button"
+              @click="event.path && openArtifact({ title: event.message, path: event.path })"
+              :title="event.detail"
+            >
+              <small>{{ event.stage }} {{ event.round }}</small>
+              <span>{{ event.message }}</span>
+            </button>
+          </div>
+        </div>
+        <div v-if="runState" class="download-panel">
+          <strong>{{ t.downloads }}</strong>
+          <div v-if="runState.downloads?.length" class="download-list">
+            <a v-for="item in runState.downloads" :key="item.path" :href="downloadUrl(item)">
+              {{ item.title }}
+            </a>
+          </div>
+          <p v-else class="empty">{{ t.noDownloads }}</p>
         </div>
         <a class="github-card" href="https://github.com/damonwan1/AutoScholarLoop" target="_blank" rel="noreferrer">
           <span>GitHub</span>

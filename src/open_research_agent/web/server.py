@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import threading
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from open_research_agent.writing.paper_formats import FORMATS
 try:
     from fastapi import FastAPI, File, Form, HTTPException, UploadFile
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import PlainTextResponse
+    from fastapi.responses import FileResponse, PlainTextResponse
 except ImportError as exc:  # pragma: no cover - import guard for optional web extra
     raise RuntimeError("Install web dependencies with `pip install .[web]`.") from exc
 
@@ -45,6 +46,16 @@ PREVIEW_FILES = [
     ("LaTeX Main", "paper/main.tex"),
     ("Compile Report", "04_quality/compile_report.md"),
     ("Final Draft", "paper/final_draft.md"),
+    ("Revision Required", "release/REVISION_REQUIRED.md"),
+    ("Run Error", "logs/web_error.txt"),
+    ("Traceback", "logs/web_traceback.txt"),
+]
+DOWNLOAD_FILES = [
+    ("LaTeX source", "paper/main.tex"),
+    ("Compiled PDF", "paper/main.pdf"),
+    ("Final draft", "paper/final_draft.md"),
+    ("Manifest", "manifest.json"),
+    ("Revision required", "release/REVISION_REQUIRED.md"),
 ]
 
 
@@ -201,13 +212,19 @@ def get_run(job_id: str):
 @app.get("/api/runs/{job_id}/artifact", response_class=PlainTextResponse)
 def get_artifact(job_id: str, path: str) -> str:
     record = _get_job(job_id)
-    target = (record.workspace / path).resolve()
-    root = record.workspace.resolve()
-    if root not in target.parents and target != root:
-        raise HTTPException(status_code=400, detail="Path is outside workspace.")
+    target = _resolve_workspace_path(record.workspace, path)
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found.")
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+@app.get("/api/runs/{job_id}/download")
+def download_artifact(job_id: str, path: str):
+    record = _get_job(job_id)
+    target = _resolve_workspace_path(record.workspace, path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+    return FileResponse(target, filename=target.name)
 
 
 def _run_job(
@@ -243,18 +260,19 @@ def _run_job(
             writing_rounds=writing_rounds,
             paper_format=paper_format,
         )
-        pipeline.run(
+        context = pipeline.run(
             workspace=ResearchWorkspace.create(record.workspace),
             seed=seed,
             references=references,
             num_ideas=num_ideas,
         )
-        record.status = "completed"
+        record.status = "completed" if context.get("research_state") == "submission_candidate" else "needs_revision"
     except Exception as exc:  # pragma: no cover - surfaced through API
         record.status = "failed"
         record.error = str(exc)
         (record.workspace / "logs").mkdir(parents=True, exist_ok=True)
         (record.workspace / "logs" / "web_error.txt").write_text(str(exc), encoding="utf-8")
+        (record.workspace / "logs" / "web_traceback.txt").write_text(traceback.format_exc(), encoding="utf-8")
     finally:
         record.finished_at = datetime.now(timezone.utc).isoformat()
 
@@ -277,12 +295,30 @@ def _status_payload(record: JobRecord) -> Dict[str, Any]:
     completed_count = sum(1 for stage in stages if stage["status"] == "completed")
     if record.status == "running" and completed_count < len(stages):
         stages[completed_count]["status"] = "active"
+    elif record.status == "failed":
+        failed_stage = _read_current_stage(record.workspace)
+        for stage in stages:
+            if failed_stage and stage["key"].startswith(failed_stage):
+                stage["status"] = "failed"
+    elif record.status == "needs_revision":
+        return_to = _read_return_to(record.workspace)
+        for stage in stages:
+            if return_to and stage["key"].startswith(return_to):
+                stage["status"] = "needs_revision"
     progress = int((completed_count / len(stages)) * 100)
     previews = []
     for title, relpath in PREVIEW_FILES:
         path = record.workspace / relpath
         if path.exists():
             previews.append({"title": title, "path": relpath})
+    for event in _run_events(record.workspace):
+        if event.get("path") and not any(item["path"] == event["path"] for item in previews):
+            previews.append({"title": event.get("title") or event["message"], "path": event["path"]})
+    downloads = []
+    for title, relpath in DOWNLOAD_FILES:
+        path = record.workspace / relpath
+        if path.exists():
+            downloads.append({"title": title, "path": relpath, "size": path.stat().st_size})
     return {
         "job_id": record.id,
         "status": record.status,
@@ -293,6 +329,9 @@ def _status_payload(record: JobRecord) -> Dict[str, Any]:
         "progress": 100 if record.status == "completed" else progress,
         "stages": stages,
         "previews": previews,
+        "downloads": downloads,
+        "logs": _run_events(record.workspace),
+        "current_action": _current_action(record.workspace, record.status),
         "manifest": manifest,
     }
 
@@ -304,8 +343,146 @@ def _get_job(job_id: str) -> JobRecord:
         workspace = RUN_ROOT / job_id
         if not workspace.exists():
             raise HTTPException(status_code=404, detail="Run not found.")
-        record = JobRecord(id=job_id, workspace=workspace, status="completed")
+        record = JobRecord(id=job_id, workspace=workspace, status=_infer_terminal_status(workspace))
     return record
+
+
+def _resolve_workspace_path(workspace: Path, path: str) -> Path:
+    target = (workspace / path).resolve()
+    root = workspace.resolve()
+    if root not in target.parents and target != root:
+        raise HTTPException(status_code=400, detail="Path is outside workspace.")
+    return target
+
+
+def _run_events(workspace: Path, limit: int = 80) -> list[dict[str, str]]:
+    events: list[dict[str, str]] = []
+    progress = workspace / "00_field_context" / "progress_index.md"
+    if progress.exists():
+        for line in progress.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.startswith("- "):
+                continue
+            parts = [part.strip() for part in line[2:].split("|")]
+            if len(parts) >= 4:
+                title = _checkpoint_title(parts[1], parts[2], Path(parts[3]).name)
+                events.append(
+                    {
+                        "time": parts[0],
+                        "stage": parts[1],
+                        "round": parts[2],
+                        "message": title,
+                        "title": title,
+                        "detail": Path(parts[3]).name,
+                        "status": "completed",
+                        "path": _relative_or_empty(workspace, parts[3]),
+                    }
+                )
+    shell_dir = workspace / "logs" / "shell_runs"
+    if shell_dir.exists():
+        for log_path in sorted(shell_dir.glob("run_*.json")):
+            data = _read_json(log_path, default={})
+            return_code = data.get("return_code")
+            summary = data.get("summary") or _shell_summary(data)
+            events.append(
+                {
+                    "time": datetime.fromtimestamp(log_path.stat().st_mtime, tz=timezone.utc).isoformat(),
+                    "stage": "S02",
+                    "round": "shell",
+                    "message": summary,
+                    "title": "Local experiment command",
+                    "detail": f"{data.get('command', 'shell command')} -> rc={return_code}",
+                    "status": "completed" if return_code == 0 else "failed",
+                    "path": _relative_or_empty(workspace, str(log_path)),
+                }
+            )
+    return events[-limit:]
+
+
+def _current_action(workspace: Path, status: str) -> str:
+    if status == "failed":
+        error_path = workspace / "logs" / "web_error.txt"
+        error = error_path.read_text(encoding="utf-8", errors="replace").strip() if error_path.exists() else ""
+        stage = _read_current_stage(workspace) or "current stage"
+        return f"{stage} failed. Reason: {error or 'unknown error'}"
+    if status == "needs_revision":
+        return_to = _read_return_to(workspace) or "the failed stage"
+        return f"Quality gate did not pass. Return to {return_to} for another loop."
+    state_path = workspace / "00_field_context" / "checkpoint_state.md"
+    if not state_path.exists():
+        return "Preparing workspace and reading inputs."
+    lines = state_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    state = [
+        line.replace("- ", "")
+        for line in lines
+        if line.startswith("- state:") or line.startswith("- current_stage:") or line.startswith("- next_action:")
+    ]
+    return " | ".join(state[-3:]) or "Running research loop."
+
+
+def _read_return_to(workspace: Path) -> str:
+    gate_path = workspace / "04_quality" / "final_gate.md"
+    if not gate_path.exists():
+        return ""
+    for line in gate_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("- return_to:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _read_current_stage(workspace: Path) -> str:
+    state_path = workspace / "00_field_context" / "checkpoint_state.md"
+    if not state_path.exists():
+        return ""
+    for line in state_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("- current_stage:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _checkpoint_title(stage: str, round_id: str, filename: str) -> str:
+    label = {
+        "S00": "Field archive updated",
+        "S01": "Professor group discussed and refined ideas",
+        "S02": "PhD execution round recorded",
+        "S03": "Writing/review draft checkpoint saved",
+        "S04": "Quality audit checkpoint saved",
+    }.get(stage, "Research checkpoint saved")
+    if "review_memo" in filename:
+        label = "Professor review memo saved"
+    if "final_gate" in filename:
+        label = "Final quality gate completed"
+    return f"{label} ({stage} {round_id})"
+
+
+def _shell_summary(data: dict[str, Any]) -> str:
+    command = str(data.get("command", "shell command")).lower()
+    rc = data.get("return_code")
+    output = str(data.get("stderr") or data.get("stdout") or "").strip().splitlines()
+    reason = output[-1] if output else "non-zero exit code"
+    if "baseline" in command:
+        action = "Baseline reproduction/check"
+    elif "experiment" in command or "train" in command:
+        action = "Experiment execution"
+    elif "mkdir" in command:
+        action = "Workspace preparation"
+    else:
+        action = "Local command"
+    return f"{action} completed successfully." if rc == 0 else f"{action} failed: {reason[:220]}"
+
+
+def _infer_terminal_status(workspace: Path) -> str:
+    if (workspace / "release" / "REVISION_REQUIRED.md").exists():
+        return "needs_revision"
+    if (workspace / "logs" / "web_error.txt").exists():
+        return "failed"
+    return "completed"
+
+
+def _relative_or_empty(workspace: Path, path: str) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(workspace.resolve())).replace("\\", "/")
+    except Exception:
+        return ""
 
 
 def _read_config() -> Dict[str, Any]:

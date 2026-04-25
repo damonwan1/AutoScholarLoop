@@ -405,6 +405,99 @@ button {
   background: var(--clay);
 }
 
+.stage-card.needs_revision {
+  border-color: rgba(185, 95, 63, 0.58);
+  background: rgba(185, 95, 63, 0.15);
+}
+
+.stage-card.needs_revision span {
+  color: #fff;
+  background: var(--clay);
+}
+
+.runtime-panel,
+.download-panel {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(47, 74, 55, 0.16);
+  border-radius: 22px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.runtime-panel > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.runtime-panel span,
+.download-panel strong {
+  color: var(--moss-dark);
+  font-weight: 900;
+}
+
+.runtime-panel > div:first-child span {
+  color: var(--clay);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.runtime-panel > div:first-child strong {
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.runtime-log {
+  display: grid;
+  max-height: 280px;
+  overflow: auto;
+  gap: 8px;
+}
+
+.runtime-log button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  border-radius: 14px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(84, 111, 75, 0.09);
+}
+
+.runtime-log button.failed {
+  border: 1px solid rgba(185, 95, 63, 0.34);
+  background: rgba(185, 95, 63, 0.13);
+}
+
+.runtime-log button.completed {
+  border: 1px solid rgba(84, 111, 75, 0.16);
+}
+
+.runtime-log small {
+  color: var(--clay);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.download-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.download-list a {
+  border-radius: 999px;
+  padding: 9px 12px;
+  color: #fffdf4;
+  background: var(--moss-dark);
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .results {
   margin-top: 22px;
 }

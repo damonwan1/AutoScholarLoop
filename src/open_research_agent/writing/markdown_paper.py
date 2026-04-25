@@ -87,6 +87,16 @@ def _build_from_manuscript(
     paper_format: str,
 ) -> str:
     title = manuscript.get("title") or "AUTO Research Draft"
+    supported_claims = [claim for claim in claims if _is_supported_claim(claim)]
+    if claims and not supported_claims:
+        results_text = (
+            "No validated experimental result is available yet. The quality gate requires another "
+            "execution loop before any efficiency, accuracy, or superiority claim can be stated as a result."
+        )
+    elif supported_claims:
+        results_text = manuscript.get("results", "")
+    else:
+        results_text = "No claim-evidence table was produced for this draft."
     lines = [
         f"# {title}",
         "",
@@ -114,7 +124,7 @@ def _build_from_manuscript(
         "",
         "## Results",
         "",
-        manuscript.get("results", ""),
+        results_text,
         "",
         "## Claim-Evidence Status",
         "",
@@ -144,3 +154,12 @@ def _build_from_manuscript(
         ]
     )
     return "\n".join(lines)
+
+
+def _is_supported_claim(claim: dict[str, Any]) -> bool:
+    status = str(claim.get("status", "")).lower()
+    support = str(claim.get("support") or claim.get("evidence") or "").strip().lower()
+    if not support or support in {"none", "null", "n/a", "no evidence"}:
+        return False
+    weak_markers = ("unsupported", "hypothesis", "future", "planned", "missing", "unknown")
+    return not any(marker in status for marker in weak_markers)

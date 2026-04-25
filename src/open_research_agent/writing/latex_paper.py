@@ -68,51 +68,62 @@ def write_latex_from_markdown(markdown_path: Path, tex_path: Path, paper_format_
 
 def compile_latex(tex_path: Path, timeout: int = 120) -> dict[str, str | int | bool]:
     fmt = _read_format_key(tex_path.parent / "format_profile.json")
-    engine = _select_engine(fmt)
-    if engine is None:
+    engines = _candidate_engines(fmt)
+    if not engines:
         return {
             "compiled": False,
             "return_code": 127,
             "message": "No LaTeX engine found. Install latexmk, xelatex, or pdflatex.",
             "pdf": "",
         }
-    commands = _compile_commands(engine, tex_path.name, needs_bibtex=(tex_path.parent / "references.bib").exists())
     logs = []
     return_code = 0
-    for command in commands:
-        try:
-            result = subprocess.run(
-                command,
-                cwd=str(tex_path.parent),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "compiled": False,
-                "return_code": 124,
-                "message": f"LaTeX command timed out: {' '.join(command)}",
-                "stdout": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
-                "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
-                "pdf": "",
-            }
-        return_code = result.returncode
-        logs.append(
-            {
+    pdf_path = tex_path.with_suffix(".pdf")
+    used_engine = ""
+    for engine in engines:
+        used_engine = engine
+        commands = _compile_commands(engine, tex_path.name, needs_bibtex=(tex_path.parent / "references.bib").exists())
+        engine_logs = []
+        for command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=str(tex_path.parent),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                return {
+                    "compiled": False,
+                    "return_code": 124,
+                    "message": f"LaTeX command timed out: {' '.join(command)}",
+                    "stdout": (exc.stdout or "")[-4000:] if isinstance(exc.stdout, str) else "",
+                    "stderr": (exc.stderr or "")[-4000:] if isinstance(exc.stderr, str) else "",
+                    "pdf": "",
+                }
+            return_code = result.returncode
+            entry = {
+                "engine": engine,
                 "command": " ".join(command),
                 "return_code": result.returncode,
                 "stdout": result.stdout[-2000:],
                 "stderr": result.stderr[-2000:],
             }
-        )
-        # Keep going for LaTeX multi-pass when possible, but record failures.
-    pdf_path = tex_path.with_suffix(".pdf")
+            logs.append(entry)
+            engine_logs.append(entry)
+        if pdf_path.exists():
+            break
+        # latexmk on MiKTeX commonly fails without Perl; try the direct engine next.
+        if engine.startswith("latexmk"):
+            continue
+        if engine_logs and all(item["return_code"] != 0 for item in engine_logs):
+            continue
     return {
         "compiled": pdf_path.exists(),
         "return_code": return_code,
-        "engine": engine,
-        "passes": len(commands),
+        "engine": used_engine,
+        "passes": len(logs),
         "stdout": "\n".join(item["stdout"] for item in logs)[-4000:],
         "stderr": "\n".join(item["stderr"] for item in logs)[-4000:],
         "commands": json.dumps(logs, ensure_ascii=False),
@@ -130,15 +141,21 @@ def _read_format_key(profile_path: Path) -> str:
 
 
 def _select_engine(format_key: str) -> str | None:
+    engines = _candidate_engines(format_key)
+    return engines[0] if engines else None
+
+
+def _candidate_engines(format_key: str) -> list[str]:
+    engines = []
     if shutil.which("latexmk"):
-        return "latexmk-xelatex" if format_key == "chinese_thesis" else "latexmk-pdflatex"
+        engines.append("latexmk-xelatex" if format_key == "chinese_thesis" else "latexmk-pdflatex")
     if format_key == "chinese_thesis" and shutil.which("xelatex"):
-        return "xelatex"
+        engines.append("xelatex")
     if shutil.which("pdflatex"):
-        return "pdflatex"
+        engines.append("pdflatex")
     if shutil.which("xelatex"):
-        return "xelatex"
-    return None
+        engines.append("xelatex")
+    return engines
 
 
 def _compile_commands(engine: str, tex_name: str, needs_bibtex: bool) -> list[list[str]]:
