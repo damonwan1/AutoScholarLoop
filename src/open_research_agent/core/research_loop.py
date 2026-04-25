@@ -10,6 +10,7 @@ from open_research_agent.core.loop_state import LoopPolicy
 from open_research_agent.core.capability_contracts import contracts_json, contracts_markdown
 from open_research_agent.core.stage import PipelineContext
 from open_research_agent.core.workspace import ResearchWorkspace
+from open_research_agent.skills.registry import all_skill_context, skills_manifest_markdown, stage_skill_context
 from open_research_agent.writing.latex_paper import compile_latex, write_latex_from_markdown
 from open_research_agent.writing.markdown_paper import build_markdown_paper
 from open_research_agent.writing.paper_formats import get_paper_format, write_format_profile
@@ -37,6 +38,7 @@ class ResearchGroupLoopPipeline:
             num_ideas=num_ideas,
             paper_format=self.services.get("paper_format", "ieee"),
             capability_contracts={stage: contracts_json(stage) for stage in ["S00", "S01", "S02", "S03", "S04"]},
+            stage_skills=all_skill_context(),
             research_state="initialized",
             big_loop_iteration=1,
         )
@@ -48,6 +50,7 @@ class ResearchGroupLoopPipeline:
                 "num_ideas": num_ideas,
                 "loop_policy": self.policy.__dict__,
                 "paper_format": context["paper_format"],
+                "stage_skills": context["stage_skills"],
             },
         )
         self._s00_field_archive(workspace, context)
@@ -77,7 +80,7 @@ class ResearchGroupLoopPipeline:
         brief = self.provider.complete_json(
             role="field_archive_group",
             task="intake",
-            context=dict(context),
+            context=_with_stage_skill(context, "S00"),
             schema_hint={"problem": "str", "references": "list[str]"},
         )
         query = context["seed"]
@@ -110,6 +113,8 @@ class ResearchGroupLoopPipeline:
         )
         paths = [
             write_canonical(workspace, "00_field_context", "capability_contracts.md", contracts_markdown("S00")),
+            write_canonical(workspace, "00_field_context", "skills_manifest.md", skills_manifest_markdown()),
+            write_canonical(workspace, "00_field_context", "skill_support.md", _skill_support_markdown("S00")),
             write_canonical(workspace, "00_field_context", "field_map.md", field_map),
             write_canonical(workspace, "00_field_context", "paper_cards.md", paper_cards),
             write_canonical(workspace, "00_field_context", "method_map.md", method_map),
@@ -131,7 +136,11 @@ class ResearchGroupLoopPipeline:
             Artifact(
                 "S00_field_archive",
                 "field_context",
-                {"context": dict(context), "capability_contracts": contracts_json("S00")},
+                {
+                    "context": dict(context),
+                    "capability_contracts": contracts_json("S00"),
+                    "skill": stage_skill_context("S00"),
+                },
             )
         )
         paths.append(artifact_path)
@@ -156,7 +165,7 @@ class ResearchGroupLoopPipeline:
             response = self.provider.complete_json(
                 role="professor_decision_group",
                 task="ideation",
-                context=dict(context, decision_round=round_id, focus=focus),
+                context=_with_stage_skill(context, "S01", decision_round=round_id, focus=focus),
                 schema_hint={"candidates": "list[idea]", "self_critique": "str"},
             )
             idea_pool = response
@@ -180,7 +189,7 @@ class ResearchGroupLoopPipeline:
         novelty = self.provider.complete_json(
             role="frontier_scout",
             task="novelty",
-            context=dict(context, ideas=idea_pool),
+            context=_with_stage_skill(context, "S01", ideas=idea_pool),
             schema_hint={"selected_id": "str", "decision": "proceed|pivot|kill"},
         )
         context["ideas"] = idea_pool or {}
@@ -188,6 +197,7 @@ class ResearchGroupLoopPipeline:
         context["selected_idea"] = novelty.get("selected_id", "direction_1")
         write_canonical(workspace, "01_decision", "deliberation_log.md", "\n".join(deliberation_log))
         write_canonical(workspace, "01_decision", "capability_contracts.md", contracts_markdown("S01"))
+        write_canonical(workspace, "01_decision", "skill_support.md", _skill_support_markdown("S01"))
         write_canonical(workspace, "01_decision", "IDEA_REPORT.md", _idea_report_markdown(context))
         write_canonical(workspace, "01_decision", "idea_pool.md", _idea_pool_markdown(context["ideas"]))
         write_canonical(workspace, "01_decision", "chosen_direction.md", _chosen_direction_markdown(context))
@@ -197,7 +207,11 @@ class ResearchGroupLoopPipeline:
                 Artifact(
                     "S01_professor_decision_loop",
                     "decision",
-                    {"context": dict(context), "capability_contracts": contracts_json("S01")},
+                    {
+                        "context": dict(context),
+                        "capability_contracts": contracts_json("S01"),
+                        "skill": stage_skill_context("S01"),
+                    },
                 )
             )
         )
@@ -221,13 +235,16 @@ class ResearchGroupLoopPipeline:
             plan = self.provider.complete_json(
                 role="phd_execution_group",
                 task="planning",
-                context=dict(context, execution_round=round_id, focus=focus),
+                context=_with_stage_skill(context, "S02", execution_round=round_id, focus=focus),
                 schema_hint={"objective": "str", "work_packages": "list[str]"},
             )
+            plan["execution_round"] = round_id
+            plan["focus"] = focus
+            plan["selected_idea"] = context.get("selected_idea", "")
             code_generation = self.provider.complete_json(
                 role="phd_code_agent",
                 task="code_generation",
-                context=dict(context, execution_round=round_id, focus=focus, plan=plan),
+                context=_with_stage_skill(context, "S02", execution_round=round_id, focus=focus, plan=plan),
                 schema_hint={
                     "files": "list[{path:str, content:str}]",
                     "commands": "list[str]",
@@ -236,11 +253,12 @@ class ResearchGroupLoopPipeline:
             )
             code_paths = _write_experiment_scaffold(workspace, context, execution_history, code_generation)
             plan["commands"] = code_generation.get("commands") or plan.get("commands", [])
+            plan["code_generation_notes"] = code_generation.get("notes", "")
             backend = self.services["executor"].execute(workspace.root, plan)
             execution = self.provider.complete_json(
                 role="phd_execution_group",
                 task="execution",
-                context=dict(context, plan=plan, backend=backend, execution_round=round_id),
+                context=_with_stage_skill(context, "S02", plan=plan, backend=backend, execution_round=round_id),
                 schema_hint={"runs": "list[run]", "open_issues": "list[str]"},
             )
             execution["backend_result"] = backend
@@ -289,18 +307,28 @@ class ResearchGroupLoopPipeline:
         claims = _claims_from_results_markdown(execution_history)
         audit = _experiment_audit_markdown(execution_history)
         write_canonical(workspace, "02_execution", "capability_contracts.md", contracts_markdown("S02"))
+        write_canonical(workspace, "02_execution", "skill_support.md", _skill_support_markdown("S02"))
         write_canonical(workspace, "02_execution", "baseline_scan.md", _baseline_scan_markdown(execution_history))
         write_canonical(workspace, "02_execution", "RESULTS_ANALYSIS.md", analysis)
         write_canonical(workspace, "02_execution", "CLAIMS_FROM_RESULTS.md", claims)
         write_canonical(workspace, "02_execution", "EXPERIMENT_AUDIT.md", audit)
-        write_canonical(workspace, "02_execution", "GENERATED_CODE.md", _generated_code_markdown(context["code_artifacts"]))
+        write_canonical(
+            workspace,
+            "02_execution",
+            "GENERATED_CODE.md",
+            _generated_code_markdown(context["code_artifacts"]),
+        )
         paths.extend(context["code_artifacts"])
         paths.append(
             workspace.write_artifact(
                 Artifact(
                     "S02_execution_review_loop",
                     "execution_history",
-                    {"context": dict(context), "capability_contracts": contracts_json("S02")},
+                    {
+                        "context": dict(context),
+                        "capability_contracts": contracts_json("S02"),
+                        "skill": stage_skill_context("S02"),
+                    },
                 )
             )
         )
@@ -311,14 +339,14 @@ class ResearchGroupLoopPipeline:
         evidence = self.provider.complete_json(
             role="evidence_auditor",
             task="synthesis",
-            context=dict(context),
+            context=_with_stage_skill(context, "S03"),
             schema_hint={"claims": "list[claim]", "limitations": "list[str]"},
         )
         context["evidence"] = evidence
         manuscript = self.provider.complete_json(
             role="paper_writer_group",
             task="paper_draft",
-            context=dict(context),
+            context=_with_stage_skill(context, "S03"),
             schema_hint={
                 "title": "str",
                 "abstract": "str",
@@ -353,7 +381,7 @@ class ResearchGroupLoopPipeline:
             review = self.provider.complete_json(
                 role="writing_review_group",
                 task="review",
-                context=dict(context, writing_round=round_id, focus=focus),
+                context=_with_stage_skill(context, "S03", writing_round=round_id, focus=focus),
                 schema_hint={"weaknesses": "list[str]", "required_revisions": "list[str]"},
             )
             body = contracts_markdown("S03") + "\n" + _writing_round_markdown(round_id, focus, evidence, review)
@@ -376,6 +404,7 @@ class ResearchGroupLoopPipeline:
             )
         claim_table = _claim_evidence_table(evidence)
         write_canonical(workspace, "03_writing", "capability_contracts.md", contracts_markdown("S03"))
+        write_canonical(workspace, "03_writing", "skill_support.md", _skill_support_markdown("S03"))
         write_canonical(workspace, "03_writing", "claim_evidence_table.md", claim_table)
         write_canonical(workspace, "03_writing", "PAPER_PLAN.md", _paper_plan_markdown(context))
         write_canonical(workspace, "03_writing", "paper_outline.md", _paper_outline_markdown(context))
@@ -397,7 +426,11 @@ class ResearchGroupLoopPipeline:
                 Artifact(
                     "S03_writing_review_loop",
                     "draft",
-                    {"context": dict(context), "capability_contracts": contracts_json("S03")},
+                    {
+                        "context": dict(context),
+                        "capability_contracts": contracts_json("S03"),
+                        "skill": stage_skill_context("S03"),
+                    },
                 )
             )
         )
@@ -425,6 +458,7 @@ class ResearchGroupLoopPipeline:
         context["quality_gate"] = gate
         paths = []
         write_canonical(workspace, "04_quality", "capability_contracts.md", contracts_markdown("S04"))
+        write_canonical(workspace, "04_quality", "skill_support.md", _skill_support_markdown("S04"))
         for artifact, title, body in [
             ("novelty_audit", "Novelty Audit", _quality_section(gate, "novelty")),
             ("citation_audit", "Citation Audit", _quality_section(gate, "citation")),
@@ -458,7 +492,7 @@ class ResearchGroupLoopPipeline:
                 Artifact(
                     "S04_quality_gate",
                     "quality_gate",
-                    {"gate": gate, "capability_contracts": contracts_json("S04")},
+                    {"gate": gate, "capability_contracts": contracts_json("S04"), "skill": stage_skill_context("S04")},
                 )
             )
         )
@@ -496,6 +530,30 @@ def _decision_round_markdown(round_id: int, focus: str, response: dict[str, Any]
         lines.append(f"- Risks: {', '.join(idea.get('risks', []))}")
     lines.append(f"\n## Self Critique\n\n{response.get('self_critique', '')}\n")
     return "\n".join(lines)
+
+
+def _with_stage_skill(context: dict[str, Any], stage: str, **updates: Any) -> dict[str, Any]:
+    payload = dict(context)
+    payload["active_stage_skill"] = stage_skill_context(stage)
+    payload.update(updates)
+    return payload
+
+
+def _skill_support_markdown(stage: str) -> str:
+    skill = stage_skill_context(stage)
+    outputs = "\n".join(f"- `{item}`" for item in skill.get("outputs", []))
+    return (
+        "# Skill Support\n\n"
+        "This stage is executed by the automatic Python pipeline. The skill below is an optional "
+        "agent-facing contract that can guide external review or targeted improvement without "
+        "replacing the default end-to-end workflow.\n\n"
+        f"- stage: `{stage}`\n"
+        f"- skill: `{skill.get('name', '')}`\n"
+        f"- path: `{skill.get('path', '')}`\n"
+        f"- purpose: {skill.get('purpose', '')}\n\n"
+        "## Expected Outputs\n\n"
+        f"{outputs}\n"
+    )
 
 
 def _idea_pool_markdown(ideas: dict[str, Any]) -> str:
