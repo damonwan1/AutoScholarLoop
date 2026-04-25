@@ -105,7 +105,8 @@ Planned modes:
 
 - `dry_run`: turns a plan into auditable pseudo-results;
 - `shell`: runs configured commands in a sandboxed workspace;
-- `codex_skill`: emits tasks for a coding agent;
+- `shell`: runs generated experiment commands in the workspace;
+- `dry_run`: records traceable pseudo-results for offline demos;
 - `remote_gpu`: dispatches jobs to GPU providers.
 
 ### Paper Builder
@@ -249,4 +250,5 @@ Deferred:
 - real shell/GPU experiment runner;
 - LaTeX compilation;
 - PDF ingestion;
-- external coding-agent skill execution.
+- direct external coding-agent invocation. Repository skills currently document
+  and reinforce the automatic S00-S04 stage contracts.

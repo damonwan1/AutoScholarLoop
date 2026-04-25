@@ -193,3 +193,24 @@ Changed:
   `pdflatex`, and performs multi-pass compilation;
 - compile reports include engine, pass count, command logs, and PDF path when
   generated.
+
+## v0.2.7 Stage Skill Pack
+
+Date: 2026-04-25
+
+Added:
+
+- repository skill pack for S00-S04 stage support:
+  `autoscholar-field-archive`, `autoscholar-direction-review`,
+  `autoscholar-experiment-runner`, `autoscholar-manuscript-builder`, and
+  `autoscholar-quality-gate`;
+- deeper stage skill workflows covering inputs, phase-by-phase procedures,
+  outputs, quality gates, failure handling, and anti-overclaiming rules;
+- stage skill registry exposed to the automatic pipeline;
+- generated `skills_manifest.md` and per-stage `skill_support.md` workspace artifacts;
+- smoke test coverage for stage skill registry paths and generated skill artifacts.
+
+Design note:
+
+- The default automatic S00-S04 pipeline remains intact. Skills are stage
+  contracts that reinforce the full automatic paper-generation workflow.

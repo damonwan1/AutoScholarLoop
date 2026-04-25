@@ -27,7 +27,7 @@ will need stronger backends in later versions.
 | Multiple model APIs | Partial | OpenAI-compatible adapter; Anthropic/Gemini dedicated adapters planned |
 | Parallel evaluation | Supported | `batch --parallel N` creates independent workspaces |
 | Containerization | Planned | Docker safety profile not added yet |
-| Codex/ClaudeCode skills | Designed | `docs/SKILLS_INTEGRATION.md`; skill package files planned |
+| Stage skills | Supported as pipeline contracts | S00-S04 repository skills under `skills/` plus runtime skill manifests |
 
 ## Important Interpretation
 
