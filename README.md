@@ -54,9 +54,10 @@ the paper, and where quality gates passed or failed.
   model-backed research run.
 - OpenAI-compatible provider adapter for real model APIs.
 - Local, Semantic Scholar, and OpenAlex literature adapters.
-- Dry-run and local shell execution backends. The Web console defaults to local
-  shell execution: model-generated code is written under `code/` and then run
-  on the current machine.
+- Dry-run and local shell execution backends. The Web console can run generated
+  experiment code through the same auditable workspace contract as the CLI.
+- Stage-aligned repository skills for S00-S04 that document and reinforce the
+  automatic research-loop contract.
 - Format-aware paper writing for `acm`, `ieee`, `springer_lncs`, and
   `chinese_thesis`.
 - Markdown and LaTeX manuscript export.
@@ -111,6 +112,11 @@ autoscholarloop run `
 ```
 
 The legacy command alias `new-ai-scientist` is kept for compatibility.
+
+Execution backend choices:
+
+- `dry-run`: records a traceable pseudo-run and does not execute commands.
+- `shell`: runs generated experiment commands in the run workspace.
 
 By default, `local` provider mode is a deterministic demo. For real research
 runs, configure an OpenAI-compatible model provider and API key. The system
@@ -228,6 +234,7 @@ package, not a guarantee of venue compliance.
 ```text
 docs/                         Design, roadmap, workflow, and version notes
 src/open_research_agent/       Python research loop package
+skills/                       Stage-aligned skill contracts for S00-S04
 web/                          Vue Web console
 configs/                       Example pipeline configs
 templates/                     Research workspace templates
