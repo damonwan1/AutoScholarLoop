@@ -2,50 +2,37 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-**AutoScholarLoop** is an auditable AUTO Research framework that organizes
-research automation as a staged, multi-agent loop. It turns a seed idea,
-reference notes, local papers, and optional execution backends into a visible
-research process with checkpoints, manuscript artifacts, bibliography outputs,
-and quality gates.
+**AutoScholarLoop** is an open-source AUTO Research framework for building
+auditable, multi-agent research loops. It helps users turn an initial research
+direction, recent papers, reference notes, and optional code into a staged
+research process that can generate ideas, run execution loops, draft papers,
+review claims, and package submission candidates.
 
-Developed for research automation scenarios at AI Group, CAS CNIC
+The project is developed for research automation scenarios at AI Group, CAS CNIC
 (Computer Network Information Center, Chinese Academy of Sciences).
 
-AI Group  
+
+AI Group
 ![AI Group](./img/img1.png)
 
-## What Is New In This Version
 
-This version completes the first usable reference-management loop inside the
-research pipeline:
-
-- normalized bibliography metadata is built in `S00`;
-- references are deduplicated and assigned stable cite keys;
-- `S03` now writes `paper/references.bib`;
-- Markdown draft generation now inserts inline cite markers;
-- LaTeX export now renders a bibliography section from normalized entries;
-- `S04` now performs a real citation audit instead of a placeholder-only note;
-- citation audit reports blocking issues separately from metadata warnings.
-
-The current implementation already supports unified metadata normalization for
-future multilingual retrieval. Chinese literature sources are not fully wired
-yet, but the schema now includes `language`, `source`, `doi`, `source_id`,
-`entry_type`, and `note` so Chinese providers can be added without another
-format migration.
-
-## Pipeline
+## Description
 
 AutoScholarLoop simulates a small research group rather than a single chatbot.
-The default staged loop is:
+The system separates research work into role-based stages:
 
-1. `S00` Field Archive: build field map, paper cards, evidence bank, and
-   normalized reference inventory.
-2. `S01` Professor Decision: generate, criticize, rank, and select directions.
-3. `S02` PhD Execution: plan baselines, implement, run, and summarize results.
-4. `S03` Writing Review: create paper plan, claim-evidence table, draft,
-   `references.bib`, and LaTeX export.
-5. `S04` Quality Gate: audit novelty, citations, reproducibility, claim
-   support, and release readiness.
+1. `S00` Field Archive Group builds the field map, paper cards, method map,
+   dataset/baseline map, and evidence bank.
+2. `S01` Professor Decision Group runs multi-round idea generation, critique,
+   novelty probing, ranking, and direction selection.
+3. `S02` PhD Execution Group plans baselines, implementation, experiments,
+   failure analysis, and professor review memos.
+4. `S03` Writing Group turns evidence into a manuscript plan, claim-evidence
+   table, draft, figures, and review-driven revisions.
+5. `S04` Quality Control Group audits novelty, citations, reproducibility,
+   unsupported claims, and final release readiness.
+
+The core design is a nested loop:
 
 ```text
 S00 evidence preparation
@@ -57,28 +44,29 @@ S00 evidence preparation
 ```
 
 Every stage writes Markdown checkpoints and structured artifacts so users can
-inspect why a direction was selected, what evidence exists, which references
-were used, and why the quality gate passed or failed.
+inspect how an idea was created, why it was selected, what evidence supports
+the paper, and where quality gates passed or failed.
 
-## Current Capabilities
+## Features
 
-- Multi-stage AUTO Research loop with explicit checkpoints and manifest-backed
-  artifacts.
-- Deterministic local provider for offline demos and smoke runs.
+- Multi-stage AUTO Research loop with explicit checkpoints.
+- Deterministic local provider for offline demos and tests. It is not a real
+  model-backed research run.
 - OpenAI-compatible provider adapter for real model APIs.
-- Literature adapters for `local`, `semanticscholar`, and `openalex`.
-- Unified bibliography metadata normalization with cite-key generation.
-- BibTeX generation to `paper/references.bib`.
-- Citation audit outputs in `04_quality/CITATION_AUDIT.md` and `.json`.
-- Dry-run and shell execution backends.
+- Local, Semantic Scholar, and OpenAlex literature adapters.
+- Dry-run and local shell execution backends. The Web console defaults to local
+  shell execution: model-generated code is written under `code/` and then run
+  on the current machine.
 - Format-aware paper writing for `acm`, `ieee`, `springer_lncs`, and
   `chinese_thesis`.
 - Markdown and LaTeX manuscript export.
-- Optional PDF compilation when `--compile-pdf` is enabled and the required
-  local LaTeX toolchain exists.
-- Vue Web console for run launch, progress inspection, and artifact preview.
+- Optional PDF compilation if `--compile-pdf` is enabled and a LaTeX toolchain
+  plus required venue class files are installed.
+- Vue Web console for first-run model configuration, paper upload, live loop
+  progress, and checkpoint preview.
+- CLI and Web API use the same underlying research pipeline.
 
-![Workflow](./img/img2.png)
+![Web console home page](./img/c697cd0f2147fc893a2195e32b4b2555.png)
 
 ## Installation
 
@@ -94,6 +82,9 @@ cd web
 npm install
 ```
 
+The frontend currently uses Vite 2 for compatibility with older Node
+environments. Node 18+ is recommended for future frontend upgrades.
+
 ## CLI Quick Start
 
 ```powershell
@@ -104,13 +95,12 @@ autoscholarloop run `
   --workspace runs/demo
 ```
 
-With references and literature retrieval:
+Useful options:
 
 ```powershell
 autoscholarloop run `
   --seed "your research idea" `
   --reference "paper title, URL, local path, or note" `
-  --reference ".\\papers\\example.pdf" `
   --num-ideas 5 `
   --loop-mode standard `
   --paper-format acm `
@@ -121,35 +111,34 @@ autoscholarloop run `
   --workspace runs/demo
 ```
 
-By default, `local` provider mode is a deterministic demo. For real runs,
-configure an OpenAI-compatible model provider and API key.
+The legacy command alias `new-ai-scientist` is kept for compatibility.
 
-## Reference Workflow
+By default, `local` provider mode is a deterministic demo. For real research
+runs, configure an OpenAI-compatible model provider and API key. The system
+always writes `paper/main.tex`; PDF generation is attempted only when explicitly
+enabled and when the local LaTeX environment supports the selected format.
+The compiler prefers `latexmk`, then falls back to `xelatex` or `pdflatex`
+with multi-pass compilation.
 
-The new reference path is:
+If your network environment injects a system proxy that breaks `httpx`
+connections, set:
 
-1. User supplies references through `--reference`, uploaded files, or external
-   literature lookup.
-2. `S00` normalizes each record into a shared bibliography schema.
-3. Entries are deduplicated and assigned stable cite keys.
-4. `S03` writes:
-   - `00_field_context/reference_inventory.md`
-   - `00_field_context/reference_inventory.json`
-   - `03_writing/reference_inventory.md`
-   - `paper/references.bib`
-5. Draft text uses inline cite markers such as `[@key]`.
-6. `S04` checks whether cited keys resolve, whether metadata is incomplete, and
-   whether duplicated title groups remain.
+```powershell
+$env:AUTOSCHOLARLOOP_HTTP_TRUST_ENV='0'
+```
 
-Blocking conditions:
+Example for DeepSeek-compatible APIs:
 
-- cited key missing from bibliography;
-- no inline citations found in the manuscript draft.
-
-Warnings:
-
-- incomplete metadata such as missing author, year, DOI, URL, or source ID;
-- duplicated normalized title groups.
+```powershell
+$env:OPENAI_API_KEY='your_api_key'
+$env:AUTOSCHOLARLOOP_HTTP_TRUST_ENV='0'
+autoscholarloop run `
+  --seed "your research idea" `
+  --provider openai-compatible `
+  --model deepseek-chat `
+  --base-url https://api.deepseek.com/v1 `
+  --workspace runs/deepseek_demo
+```
 
 ## Web Console
 
@@ -168,14 +157,18 @@ npm run dev
 
 The Web console supports:
 
-- provider configuration;
+- first-run large model API configuration;
+- provider presets for Local demo, DeepSeek, OpenAI, and custom
+  OpenAI-compatible APIs;
+- optional system proxy bypass for environments where `httpx` fails through
+  inherited proxy settings;
 - research direction and target venue input;
 - PDF, Markdown, text, and BibTeX upload;
 - loop mode and backend selection;
 - manuscript format selection;
-- live `S00` to `S04` progress visualization;
-- checkpoint preview for field maps, idea reports, execution analysis, paper
-  plans, claim evidence, final gate, and final draft.
+- live S00-S04 progress visualization;
+- checkpoint preview for field maps, ideas, execution reports, paper plans,
+  claim evidence, final gate, and final draft.
 
 ## Generated Workspace
 
@@ -187,6 +180,7 @@ run/
   inputs/
   artifacts/
   logs/
+  code/
   00_field_context/
   01_decision/
   02_execution/
@@ -198,42 +192,50 @@ run/
 
 Important outputs include:
 
+- `code/experiments/run_experiment.py`
+- `code/methods/proposed_method.py`
+- `code/experiments/result.json`
 - `00_field_context/field_map.md`
 - `00_field_context/paper_cards.md`
-- `00_field_context/reference_inventory.md`
 - `01_decision/IDEA_REPORT.md`
+- `01_decision/chosen_direction.md`
 - `02_execution/RESULTS_ANALYSIS.md`
+- `02_execution/CLAIMS_FROM_RESULTS.md`
+- `02_execution/EXPERIMENT_AUDIT.md`
 - `03_writing/PAPER_PLAN.md`
 - `03_writing/claim_evidence_table.md`
-- `paper/references.bib`
-- `paper/main.tex`
 - `04_quality/CITATION_AUDIT.md`
-- `04_quality/CITATION_AUDIT.json`
 - `04_quality/final_gate.md`
+- `04_quality/compile_report.md`
 - `paper/final_draft.md`
+- `paper/main.tex`
+- `paper/main.pdf` if local LaTeX compilation succeeds
 - `release/README.md`
 
 ## Paper Formats
 
 Supported manuscript targets:
 
-- `acm`
-- `ieee`
-- `springer_lncs`
-- `chinese_thesis`
+- `acm`: ACM-style conference or journal article draft.
+- `ieee`: IEEE conference or journal article draft.
+- `springer_lncs`: Springer LNCS proceedings-style draft.
+- `chinese_thesis`: generic Chinese thesis-style manuscript.
 
-The generated manuscript is an auditable draft package, not a guarantee of
-venue compliance. Official venue class files, bibliography styles, and policy
-checks still need human verification.
+Official venue class files and bibliography rules still need to be checked
+before real submission. The generated manuscript is a research draft and audit
+package, not a guarantee of venue compliance.
 
-## Limitations
+## Repository Layout
 
-- Chinese literature providers are not fully integrated yet.
-- Citation audit currently verifies internal consistency of bibliography and
-  cite usage, not full web-scale truth verification.
-- Literature retrieval quality depends on the configured adapter.
-- Real experimental validity and submission readiness still require human
-  review.
+```text
+docs/                         Design, roadmap, workflow, and version notes
+src/open_research_agent/       Python research loop package
+web/                          Vue Web console
+configs/                       Example pipeline configs
+templates/                     Research workspace templates
+examples/                      Example inputs
+tests/                         Smoke tests
+```
 
 ## Development
 
@@ -251,27 +253,55 @@ cd web
 npm run build
 ```
 
-## Repository Layout
+## Project Status
 
-```text
-docs/                          Design, roadmap, workflow, and version notes
-src/open_research_agent/       Python research loop package
-web/                           Vue Web console
-configs/                       Example pipeline configs
-templates/                     Research workspace templates
-examples/                      Example inputs
-tests/                         Smoke tests
-```
+AutoScholarLoop currently provides a runnable research-loop scaffold with
+auditable outputs. It is designed for iterative extension. It does not yet
+guarantee true scientific novelty, correct citations, valid experiments, or
+submission-ready papers without human supervision.
+
+Use it as a research automation assistant, not as a replacement for scientific
+judgment, domain expertise, peer review, or responsible authorship.
+
+## Acknowledgements
+
+AutoScholarLoop is inspired by and learns from several open research automation
+and paper-writing projects, including:
+
+- `AI-Scientist-main`, for demonstrating an end-to-end AI scientist workflow.
+- `academic-paper-writer-main`, for paper format and manuscript-generation
+  workflow ideas.
+- Codex and ClaudeCode style coding-agent workflows, for skill-oriented
+  automation patterns.
+- Open literature infrastructure such as Semantic Scholar and OpenAlex, for
+  retrieval and bibliography-oriented research workflows.
+
+This repository is an independent implementation. Architecture, code, stage
+contracts, and Web UI are written for AutoScholarLoop.
+
+## Organization
+
+Developed for:
+
+**CAS CNIC**  
+Computer Network Information Center, Chinese Academy of Sciences  
+
 
 ## License & Responsible Use
 
-This project is licensed under **The AI Scientist Source Code License**, a
-derivative of the Responsible AI License.
+This project is licensed under **The AI Scientist Source Code License**,
+a derivative of the Responsible AI License.
 
-**Mandatory disclosure:** if you use this code in a paper or scientific
-manuscript, you must clearly disclose the use of AI in accordance with the
-license and venue policy.
+**Mandatory Disclosure:** By using this code, you are legally bound to clearly
+and prominently disclose the use of AI in any resulting scientific manuscripts
+or papers.
 
-Users remain responsible for verifying claims, references, experiments,
-authorship requirements, venue rules, and disclosure obligations before
-submission.
+We recommend the following attribution in your paper's Abstract or Methods
+section:
+
+> "This manuscript was autonomously generated using AutoScholarLoop, an
+> AI-assisted research-loop system inspired by The AI Scientist."
+
+Users are responsible for verifying all claims, citations, experiments,
+authorship requirements, venue policies, and disclosure obligations before
+submitting any generated manuscript.
