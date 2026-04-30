@@ -13,7 +13,7 @@ The project is developed for research automation scenarios at AI Group, CAS CNIC
 
 
 AI Group
-![图片1](./img/img1.png)
+![AI Group](./img/img1.png)
 
 
 ## Description
@@ -65,7 +65,8 @@ the paper, and where quality gates passed or failed.
 - Vue Web console for first-run model configuration, paper upload, live loop
   progress, and checkpoint preview.
 - CLI and Web API use the same underlying research pipeline.
-![图片2](./img/img2.png)
+
+![Web console home page](./img/c697cd0f2147fc893a2195e32b4b2555.png)
 
 ## Installation
 
