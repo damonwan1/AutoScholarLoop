@@ -69,6 +69,58 @@ def test_paper_results_are_evidence_grounded() -> None:
     assert "No validated experimental result" in paper
 
 
+def test_empty_manuscript_uses_nonblank_fallback() -> None:
+    paper = build_markdown_paper(
+        {
+            "seed": "empty manuscript regression",
+            "paper_format": "ieee",
+            "manuscript": {
+                "title": "",
+                "abstract": " ",
+                "introduction": "",
+                "related_work": "",
+                "method": "",
+                "experiments": "",
+                "results": "",
+                "limitations": [],
+                "conclusion": "",
+            },
+            "evidence": {"claims": [], "limitations": []},
+        }
+    )
+    assert "This draft studies empty manuscript regression" in paper
+    assert "fallback draft was used" in paper
+    assert len([line for line in paper.splitlines() if line.strip()]) > 10
+
+
+def test_partial_manuscript_fills_missing_sections() -> None:
+    paper = build_markdown_paper(
+        {
+            "seed": "partial manuscript regression",
+            "selected_idea": "direction_1",
+            "paper_format": "ieee",
+            "manuscript": {
+                "title": "Partial Draft",
+                "abstract": "Abstract is present.",
+                "introduction": "",
+                "related_work": "",
+                "method": "",
+                "experiments": "",
+                "results": "",
+                "conclusion": "",
+            },
+            "evidence": {
+                "claims": [{"claim": "auditability improves", "support": "manifest", "status": "supported"}],
+                "limitations": [],
+            },
+        }
+    )
+    assert "# Partial Draft" in paper
+    assert "Abstract is present." in paper
+    assert "The run starts from partial manuscript regression" in paper
+    assert "No validated result text was supplied" in paper
+
+
 def test_malformed_model_json_becomes_recoverable_checkpoint() -> None:
     data = _safe_json_loads(
         '{"files": [{"path": "x.py", "content": "unterminated}',

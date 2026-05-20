@@ -135,19 +135,39 @@ class LocalHeuristicProvider(ModelProvider):
                 "limitations": ["offline provider does not validate scientific novelty"],
             }
         if task == "paper_draft":
+            short_seed = str(seed).strip().replace("\n", " ")[:120]
             return {
-                "title": "Evidence-Grounded AUTO Research Loops",
+                "title": f"Evidence-Grounded Study of {short_seed}",
                 "abstract": (
-                    "This paper draft describes a staged AUTO Research workflow. "
-                    "Empirical claims remain provisional until backed by executed experiments."
+                    f"This demo draft studies {short_seed}. It frames the problem as an auditable "
+                    "research workflow, records generated artifacts, and avoids unsupported empirical claims."
                 ),
-                "introduction": "The research problem is converted into auditable decisions, execution artifacts, and writing checkpoints.",
-                "related_work": "Related work should be populated from verified literature cards and citation audits.",
-                "method": "The method consists of field archiving, professor decision loops, executor-review loops, evidence-driven writing, and quality gates.",
-                "experiments": "The current demo run generates experiment code scaffolds but does not execute a real benchmark.",
-                "results": "No performance claim is accepted without result files and claim-evidence support.",
+                "introduction": (
+                    f"The target problem is {short_seed}. The pipeline converts this direction into a "
+                    "traceable sequence of idea selection, execution planning, evidence synthesis, and writing review."
+                ),
+                "related_work": (
+                    "Related work is represented by local literature cards and uploaded references when available. "
+                    "This demo run uses the local provider, so external citation claims are intentionally deferred."
+                ),
+                "method": (
+                    "The method builds a minimal research scaffold: define measurable inputs, identify a candidate "
+                    "modeling direction, generate runnable experiment files, and pass every manuscript claim through "
+                    "a claim-evidence gate."
+                ),
+                "experiments": (
+                    "The demo produces a placeholder experiment workspace with configuration, a proposed method "
+                    "module, a result schema, and run commands. A real benchmark must replace the placeholder data."
+                ),
+                "results": (
+                    "The run supports only process-level claims: artifacts were generated and audited. It does not "
+                    "claim prediction accuracy, superiority, or deployment readiness without real result files."
+                ),
                 "limitations": ["Local demo mode is not a substitute for real experiments."],
-                "conclusion": "The workflow is a foundation for controlled, auditable research automation.",
+                "conclusion": (
+                    f"For {short_seed}, AutoScholarLoop can produce a structured draft and execution scaffold. "
+                    "The next step is to attach real data, baselines, metrics, and citations."
+                ),
             }
         if task == "review":
             return {
@@ -199,6 +219,9 @@ class OpenAICompatibleProvider(ModelProvider):
                 "Never invent experimental numbers, citations, datasets, or completed baselines. "
                 "If result files or backend logs do not support a claim, mark the claim as unsupported or hypothesis. "
                 "For code_generation, create runnable local Python code plus commands that can execute on the current machine. "
+                "Obey any execution_contract exactly: use only declared workspace-relative paths, create output directories "
+                "inside code/experiments or code/results, and do not use placeholder repositories, cd into undeclared folders, "
+                "Unix-only shell scripts, or external clones unless the user supplied that source. "
                 "For paper_draft, write only evidence-grounded results and move unsupported claims to limitations or future work."
             ),
         }

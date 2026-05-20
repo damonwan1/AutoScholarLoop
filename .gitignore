@@ -7,7 +7,10 @@ dist/
 build/
 *.egg-info/
 runs/
+demo_runs/
 .env
 .local/
+web_api.log
+AutoScholarLoop-master/
 web/node_modules/
 web/dist/

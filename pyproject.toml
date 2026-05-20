@@ -16,7 +16,7 @@ dependencies = []
 
 [project.optional-dependencies]
 api = ["openai>=1.0.0"]
-web = ["fastapi>=0.110.0", "uvicorn[standard]>=0.27.0", "python-multipart>=0.0.9"]
+web = ["fastapi>=0.110.0", "uvicorn[standard]>=0.27.0", "python-multipart>=0.0.9", "pypdf>=4.0.0"]
 dev = ["pytest>=8.0.0"]
 
 [tool.setuptools.packages.find]

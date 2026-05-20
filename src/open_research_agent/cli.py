@@ -48,13 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--writing-rounds", type=int, default=None, help="Override S03 writing-review rounds.")
     run.add_argument(
         "--literature",
-        default="local",
+        default="openalex",
         choices=["local", "semanticscholar", "openalex"],
         help="Literature search backend for novelty and citation support.",
     )
     run.add_argument(
         "--execution-backend",
-        default="dry-run",
+        default="shell",
         choices=["dry-run", "shell"],
         help="Execution backend for exploration runs.",
     )
@@ -72,9 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--compile-pdf",
+        dest="compile_pdf",
         action="store_true",
         help="Also export LaTeX and attempt pdflatex compilation.",
     )
+    run.add_argument(
+        "--no-compile-pdf",
+        dest="compile_pdf",
+        action="store_false",
+        help="Skip PDF compilation and only write Markdown/LaTeX outputs.",
+    )
+    run.set_defaults(compile_pdf=True)
     run.add_argument(
         "--paper-format",
         default="ieee",
@@ -88,8 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--provider", default="local", choices=["local", "openai-compatible"])
     batch.add_argument("--model", default="local-researcher")
     batch.add_argument("--base-url", default=None)
-    batch.add_argument("--literature", default="local", choices=["local", "semanticscholar", "openalex"])
-    batch.add_argument("--execution-backend", default="dry-run", choices=["dry-run", "shell"])
+    batch.add_argument("--literature", default="openalex", choices=["local", "semanticscholar", "openalex"])
+    batch.add_argument("--execution-backend", default="shell", choices=["dry-run", "shell"])
     batch.add_argument("--review-ensemble", type=int, default=1)
     batch.add_argument("--loop-mode", default="standard", choices=["fast", "standard", "strict"])
     batch.add_argument("--max-big-loops", type=int, default=None)

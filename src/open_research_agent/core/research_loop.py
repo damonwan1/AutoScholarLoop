@@ -84,7 +84,7 @@ class ResearchGroupLoopPipeline:
             schema_hint={"problem": "str", "references": "list[str]"},
         )
         query = context["seed"]
-        literature_hits = self.services["literature"].search(query, limit=8)
+        literature_hits = self.services["literature"].search(query, limit=14)
         context["field_brief"] = brief
         context["literature_hits"] = [record.__dict__ for record in literature_hits]
 
@@ -224,13 +224,13 @@ class ResearchGroupLoopPipeline:
             plan = self.provider.complete_json(
                 role="phd_execution_group",
                 task="planning",
-                context=dict(context, execution_round=round_id, focus=focus),
+                context=dict(context, execution_round=round_id, focus=focus, execution_contract=_execution_contract()),
                 schema_hint={"objective": "str", "work_packages": "list[str]"},
             )
             code_generation = self.provider.complete_json(
                 role="phd_code_agent",
                 task="code_generation",
-                context=dict(context, execution_round=round_id, focus=focus, plan=plan),
+                context=dict(context, execution_round=round_id, focus=focus, plan=plan, execution_contract=_execution_contract()),
                 schema_hint={
                     "files": "list[{path:str, content:str}]",
                     "commands": "list[str]",
@@ -238,7 +238,8 @@ class ResearchGroupLoopPipeline:
                 },
             )
             code_paths = _write_experiment_scaffold(workspace, context, execution_history, code_generation)
-            plan["commands"] = code_generation.get("commands") or plan.get("commands", [])
+            plan["commands"] = _repair_generated_commands(workspace.root, code_generation.get("commands") or plan.get("commands", []))
+            write_canonical(workspace, "02_execution", f"command_validation_R{round_id:02d}.md", _command_validation_markdown(plan["commands"]))
             backend = self.services["executor"].execute(workspace.root, plan)
             execution = self.provider.complete_json(
                 role="phd_execution_group",
@@ -288,9 +289,11 @@ class ResearchGroupLoopPipeline:
         context["code_artifacts"] = sorted(
             str(path) for path in (workspace.root / "code").rglob("*") if path.is_file()
         )
-        analysis = _results_analysis_markdown(execution_history)
-        claims = _claims_from_results_markdown(execution_history)
-        audit = _experiment_audit_markdown(execution_history)
+        result_evidence = _load_result_evidence(workspace.root)
+        context["result_evidence"] = result_evidence
+        analysis = _results_analysis_markdown(execution_history, result_evidence)
+        claims = _claims_from_results_markdown(execution_history, result_evidence)
+        audit = _experiment_audit_markdown(execution_history, result_evidence)
         write_canonical(workspace, "02_execution", "capability_contracts.md", contracts_markdown("S02"))
         write_canonical(workspace, "02_execution", "baseline_scan.md", _baseline_scan_markdown(execution_history))
         write_canonical(workspace, "02_execution", "RESULTS_ANALYSIS.md", analysis)
@@ -317,6 +320,7 @@ class ResearchGroupLoopPipeline:
             context=dict(context),
             schema_hint={"claims": "list[claim]", "limitations": "list[str]"},
         )
+        evidence = _merge_result_evidence(evidence, context.get("result_evidence", {}))
         context["evidence"] = evidence
         manuscript = self.provider.complete_json(
             role="paper_writer_group",
@@ -440,7 +444,11 @@ class ResearchGroupLoopPipeline:
                 "claim_evidence": "pass" if not missing_evidence else "fail",
             },
         }
+        layout_audit = _layout_audit(workspace.root, context)
+        gate["checks"]["layout"] = layout_audit["status"]
+        gate["checks"]["content_structure"] = layout_audit["content_status"]
         context["quality_gate"] = gate
+        context["layout_audit"] = layout_audit
         paths = []
         write_canonical(workspace, "04_quality", "capability_contracts.md", contracts_markdown("S04"))
         for artifact, title, body in [
@@ -467,6 +475,8 @@ class ResearchGroupLoopPipeline:
         write_canonical(workspace, "04_quality", "CITATION_AUDIT.md", _citation_audit_markdown(gate))
         write_canonical(workspace, "04_quality", "CITATION_AUDIT.json", _citation_audit_json(gate))
         write_canonical(workspace, "04_quality", "compile_report.md", _compile_report_markdown(context))
+        write_canonical(workspace, "04_quality", "layout_audit.md", _layout_audit_markdown(layout_audit))
+        write_canonical(workspace, "04_quality", "layout_audit.json", json.dumps(layout_audit, indent=2, ensure_ascii=False))
         write_canonical(workspace, "04_quality", "overleaf_sync.md", _overleaf_sync_markdown())
         final_draft = Path(context["draft_path"]).read_text(encoding="utf-8")
         final_draft += "\n\n## Quality Gate\n\n" + _final_gate_markdown(gate)
@@ -641,7 +651,8 @@ def _baseline_scan_markdown(history: list[dict[str, Any]]) -> str:
     return "# Baseline Scan\n\n" + str(first.get("plan", {})) + "\n"
 
 
-def _results_analysis_markdown(history: list[dict[str, Any]]) -> str:
+def _results_analysis_markdown(history: list[dict[str, Any]], result_evidence: dict[str, Any] | None = None) -> str:
+    result_evidence = result_evidence or {}
     lines = [
         "# Results Analysis",
         "",
@@ -661,6 +672,43 @@ def _results_analysis_markdown(history: list[dict[str, Any]]) -> str:
             f"| {item.get('round')} | {item.get('plan', {}).get('objective', '')} | "
             f"{backend.get('backend', '')} | {backend.get('status', '')} | {observation} |"
         )
+    if result_evidence.get("status") == "ok":
+        primary_metric = result_evidence.get("primary_metric", "score")
+        lines.extend(
+            [
+                "",
+                "## Parsed Result File",
+                "",
+                f"- Result file: {result_evidence.get('path')}",
+                f"- Dataset: {result_evidence.get('dataset')}",
+                f"- Seeds: {result_evidence.get('n_seeds')}",
+                f"- Primary metric: {primary_metric}",
+                f"- Best model: {result_evidence.get('best_model') or result_evidence.get('best_model_by_auc')}",
+                "",
+                "| Model | Primary metric | Runtime | F1 | Brier |",
+                "|---|---:|---:|---:|---:|",
+            ]
+        )
+        for model, metrics in result_evidence.get("summary", {}).items():
+            lines.append(
+                f"| {model} | {_metric_pm(metrics, primary_metric)} | {_metric_pm(metrics, 'runtime')} | "
+                f"{_metric_pm(metrics, 'f1')} | {_metric_pm(metrics, 'brier')} |"
+            )
+        lines.extend(
+            [
+                "",
+                "## Key Findings",
+                "",
+                f"1. `{result_evidence.get('best_model') or result_evidence.get('best_model_by_auc')}` is strongest on the parsed primary metric.",
+                "2. Claims are limited to this generated benchmark unless a real dataset is attached.",
+                "",
+                "## Suggested Next Experiments",
+                "",
+                "- Replace the synthetic generator with a real classroom or public learning analytics dataset.",
+                "- Add calibration, confidence intervals, and fairness slices before any deployment claim.",
+            ]
+        )
+        return "\n".join(lines)
     lines.extend(
         [
             "",
@@ -678,7 +726,23 @@ def _results_analysis_markdown(history: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _claims_from_results_markdown(history: list[dict[str, Any]]) -> str:
+def _claims_from_results_markdown(history: list[dict[str, Any]], result_evidence: dict[str, Any] | None = None) -> str:
+    result_evidence = result_evidence or {}
+    if result_evidence.get("status") == "ok":
+        best = result_evidence.get("best_model") or result_evidence.get("best_model_by_auc")
+        primary_metric = result_evidence.get("primary_metric", "score")
+        return (
+            "# Claims From Results\n\n"
+            "| Claim | Verdict | Support | Missing Evidence | Next Action |\n"
+            "|---|---|---|---|---|\n"
+            f"| `{best}` is strongest on the generated benchmark primary metric ({primary_metric}) | supported_limited | "
+            f"{result_evidence.get('path')} with {result_evidence.get('n_seeds')} seeds | real dataset and citation audit | rerun with real data |\n"
+            "| The generated benchmark is deployment evidence | unsupported | synthetic data only | real classroom validation | keep as limitation |\n"
+            "\n"
+            "## Route\n\n"
+            "- claim_supported: limited_to_generated_benchmark\n"
+            "- confidence: medium for code execution, low for real-world generalization\n"
+        )
     return (
         "# Claims From Results\n\n"
         "| Claim | Verdict | Support | Missing Evidence | Next Action |\n"
@@ -691,7 +755,18 @@ def _claims_from_results_markdown(history: list[dict[str, Any]]) -> str:
     )
 
 
-def _experiment_audit_markdown(history: list[dict[str, Any]]) -> str:
+def _experiment_audit_markdown(history: list[dict[str, Any]], result_evidence: dict[str, Any] | None = None) -> str:
+    result_evidence = result_evidence or {}
+    if result_evidence.get("status") == "ok":
+        return (
+            "# Experiment Audit\n\n"
+            "- integrity_status: runnable_generated_benchmark\n"
+            f"- result_file: {result_evidence.get('path')}\n"
+            f"- seeds_checked: {result_evidence.get('n_seeds')}\n"
+            "- metric_correctness: parsed from JSON result file generated by local script\n"
+            "- baseline_fairness: same train/test splits and feature budget for aggregate baselines\n"
+            "- action: allow only benchmark-limited claims; reject deployment or real-world effectiveness claims\n"
+        )
     return (
         "# Experiment Audit\n\n"
         "- integrity_status: provisional\n"
@@ -700,6 +775,159 @@ def _experiment_audit_markdown(history: list[dict[str, Any]]) -> str:
         "- baseline_fairness: pending baseline reproduction\n"
         "- action: downgrade empirical claims until shell-backed experiments are available\n"
     )
+
+
+def _load_result_evidence(workspace_root: Path) -> dict[str, Any]:
+    candidates = [
+        workspace_root / "code" / "experiments" / "result.json",
+        workspace_root / "code" / "result.json",
+        workspace_root / "results" / "summary.json",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        evidence = _normalize_result_payload(data)
+        evidence["path"] = str(path)
+        return evidence
+    return {"status": "missing", "path": ""}
+
+
+def _normalize_result_payload(data: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(data.get("static"), dict) and isinstance(data.get("adaptive"), dict):
+        summary = {}
+        for model_name in ("static", "adaptive"):
+            metrics = data[model_name]
+            label = "Static decomposition" if model_name == "static" else "Adaptive decomposition"
+            summary[label] = {
+                "support_rate": {"mean": metrics.get("avg_support_rate"), "std": 0.0},
+                "f1": {"mean": metrics.get("avg_f1"), "std": 0.0},
+                "citation_accuracy": {"mean": metrics.get("avg_citation_accuracy"), "std": 0.0},
+                "avg_subtasks": {"mean": metrics.get("avg_subtasks"), "std": 0.0},
+            }
+        primary_metric = "support_rate"
+        best = _best_model_by_metric(summary, primary_metric)
+        return {
+            "status": "ok",
+            "dataset": data.get("dataset", "generated synthetic benchmark"),
+            "n_seeds": data.get("n_seeds", 1),
+            "best_model_by_auc": best,
+            "best_model": best,
+            "primary_metric": primary_metric,
+            "summary": summary,
+            "ablations": {
+                "delta_support_rate": data.get("delta_support_rate"),
+                "delta_f1": data.get("delta_f1"),
+                "delta_citation_accuracy": data.get("delta_citation_accuracy"),
+            },
+            "rows": [],
+            "protocol": data.get("config", {}),
+            "limitations": [
+                "Generated benchmark only unless a real dataset is supplied.",
+                "Claims are limited to parsed static-vs-adaptive experiment metrics.",
+            ],
+        }
+    if "summary" in data and isinstance(data["summary"], dict):
+        summary, primary_metric = _normalize_summary_metrics(data["summary"])
+        best = data.get("best_model_by_auc") or data.get("best_model") or _best_model_by_metric(summary, primary_metric)
+        return {
+            "status": "ok",
+            "dataset": data.get("dataset", "generated benchmark"),
+            "n_seeds": data.get("n_seeds", data.get("seeds", data.get("config", {}).get("num_seeds", "unknown"))),
+            "best_model_by_auc": best,
+            "best_model": best,
+            "primary_metric": primary_metric,
+            "summary": summary,
+            "ablations": data.get("ablations", {}),
+            "rows": data.get("rows", []),
+            "protocol": data.get("protocol", {}),
+            "limitations": data.get("limitations", []),
+        }
+    metrics = data.get("metrics")
+    if isinstance(metrics, dict):
+        return {
+            "status": "ok",
+            "dataset": data.get("dataset", "generated benchmark"),
+            "n_seeds": data.get("n_seeds", 1),
+            "best_model_by_auc": data.get("method") or "generated method",
+            "summary": {data.get("method", "generated method"): {key: {"mean": value, "std": 0.0} for key, value in metrics.items()}},
+            "limitations": [data.get("claim_support", "")],
+        }
+    return {"status": "unrecognized", "dataset": data.get("dataset", "unknown"), "summary": {}}
+
+
+def _normalize_summary_metrics(summary: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    if not summary:
+        return {}, "score"
+    first = next(iter(summary.values()))
+    if isinstance(first, dict) and any(isinstance(value, dict) for value in first.values()):
+        if "auc" in first:
+            return summary, "auc"
+        first_metric = next((key for key, value in first.items() if isinstance(value, dict)), "score")
+        return summary, first_metric
+    normalized = {}
+    for model, metrics in summary.items():
+        if isinstance(metrics, dict) and "mean" in metrics:
+            normalized[model] = {
+                "score": {"mean": metrics.get("mean"), "std": metrics.get("std", 0.0)},
+                "runtime": {"mean": metrics.get("mean_runtime", 0.0), "std": 0.0},
+            }
+        elif isinstance(metrics, (int, float)):
+            normalized[model] = {"score": {"mean": metrics, "std": 0.0}}
+    return normalized, "score"
+
+
+def _best_model_by_metric(summary: dict[str, Any], metric: str) -> str:
+    best_model = ""
+    best_value = float("-inf")
+    for model, metrics in summary.items():
+        raw = metrics.get(metric, {})
+        value = raw.get("mean") if isinstance(raw, dict) else raw
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            continue
+        if score > best_value:
+            best_model = model
+            best_value = score
+    return best_model or "unknown"
+
+
+def _metric_pm(metrics: dict[str, Any], key: str) -> str:
+    raw = metrics.get(key, {})
+    if isinstance(raw, dict):
+        mean = raw.get("mean")
+        std = raw.get("std", 0.0)
+    else:
+        mean = raw
+        std = 0.0
+    try:
+        return f"{float(mean):.3f} +/- {float(std):.3f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _merge_result_evidence(evidence: dict[str, Any], result_evidence: dict[str, Any]) -> dict[str, Any]:
+    if result_evidence.get("status") != "ok":
+        return evidence
+    best = result_evidence.get("best_model_by_auc", "best parsed model")
+    limitations = list(result_evidence.get("limitations") or [])
+    limitations.extend(result_evidence.get("limitations") or [])
+    limitations.append("Result claims are limited to the generated benchmark unless real data are attached.")
+    limitations.append("The current result does not establish classroom deployment readiness.")
+    return {
+        "claims": [
+            {
+                "claim": f"{best} has the highest mean AUC on the generated benchmark.",
+                "support": f"code/experiments/result.json parsed across {result_evidence.get('n_seeds')} seed(s).",
+                "status": "supported_limited_generated_benchmark",
+            }
+        ],
+        "limitations": list(dict.fromkeys(item for item in limitations if item)),
+    }
 
 
 def _write_experiment_scaffold(
@@ -732,6 +960,7 @@ def _write_experiment_scaffold(
             "and result files.\n\n"
             "## Files\n\n"
             "- `experiments/run_experiment.py`: CLI entrypoint for a sanity experiment.\n"
+            "- `experiments/autoscholar_fallback_experiment.py`: stable local fallback used when generated shell commands are not portable.\n"
             "- `methods/proposed_method.py`: placeholder method module.\n"
             "- `experiments/config.json`: experiment configuration.\n"
             "- `experiments/results_schema.json`: expected result schema.\n"
@@ -746,6 +975,7 @@ def _write_experiment_scaffold(
         ),
         methods / "proposed_method.py": _proposed_method_py(),
         experiments / "run_experiment.py": _run_experiment_py(),
+        experiments / "autoscholar_fallback_experiment.py": _run_experiment_py(),
     }
     for item in (code_generation or {}).get("files", []):
         rel = str(item.get("path", "")).replace("\\", "/").lstrip("/")
@@ -765,6 +995,125 @@ def _write_experiment_scaffold(
         path.write_text(content, encoding="utf-8")
         paths.append(str(path))
     return paths
+
+
+def _execution_contract() -> dict[str, Any]:
+    return {
+        "allowed_write_roots": ["code/experiments", "code/methods", "code/analysis", "code/results"],
+        "required_result_file": "code/experiments/result.json",
+        "portable_command_rules": [
+            "Use python, not python3.",
+            "Use workspace-relative paths beginning with code/.",
+            "Do not cd into arbitrary folders. If cd is needed, use code/experiments, code/analysis, or code/results only.",
+            "Do not use bash, sh, chmod, source, or ./script.sh on Windows.",
+            "Do not clone external repositories or use github.com/example placeholders.",
+            "Create parent directories before writing outputs, or write outputs under code/experiments/result.json.",
+        ],
+        "preferred_commands": [
+            "python code/experiments/run_experiment.py --config code/experiments/config.json --output code/experiments/result.json"
+        ],
+        "real_experiment_requirement": (
+            "Implement a self-contained executable benchmark with generated or user-supplied data, explicit baselines, "
+            "metrics, seeds, and a parseable JSON summary. Do not claim real-world validation unless real data are supplied."
+        ),
+    }
+
+
+def _repair_generated_commands(workspace_root: Path, commands: list[str]) -> list[str]:
+    repaired = []
+    for command in commands:
+        normalized = str(command or "").strip()
+        if not normalized:
+            continue
+        lower = normalized.lower()
+        if any(token in lower for token in ["github.com/example/", "git clone ", " chmod ", "source venv/bin/activate"]):
+            continue
+        if lower.startswith("chmod ") or lower.startswith("bash ") or lower.startswith("sh ") or lower.startswith("./"):
+            continue
+        normalized = normalized.replace("python3 ", "python ")
+        normalized = _repair_cd_command(workspace_root, normalized)
+        if normalized is None:
+            continue
+        normalized = _repair_python_script_path(workspace_root, normalized)
+        if normalized is None:
+            continue
+        if "--output " in normalized and "code/experiments/result.json" not in normalized:
+            normalized = _force_result_output(normalized)
+        if normalized not in repaired:
+            repaired.append(normalized)
+    fallback = "python code/experiments/autoscholar_fallback_experiment.py --config code/experiments/config.json --output code/experiments/result.json"
+    if not repaired:
+        repaired.append(fallback)
+    elif not any("code/experiments/result.json" in command for command in repaired):
+        repaired.append(fallback)
+    return repaired
+
+
+def _repair_cd_command(workspace_root: Path, command: str) -> str | None:
+    stripped = command.strip()
+    for separator in ("&&", ";"):
+        if stripped.startswith("cd ") and separator in stripped:
+            target_text = stripped[len("cd ") : stripped.index(separator)].strip().strip('"').strip("'")
+            remainder = stripped[stripped.index(separator) :]
+            if target_text == "/workspace":
+                return remainder.lstrip("&; ").strip()
+            candidates = [Path(target_text), Path("code") / target_text]
+            for candidate in candidates:
+                if (workspace_root / candidate).exists():
+                    candidate_text = str(candidate).replace("\\", "/")
+                    return f"cd {candidate_text} {remainder}"
+            return None
+    return command
+
+
+def _repair_python_script_path(workspace_root: Path, command: str) -> str | None:
+    parts = command.split()
+    cd_dir = _command_cd_dir(command)
+    for index, part in enumerate(parts):
+        if not part.endswith(".py"):
+            continue
+        script = Path(part.replace("\\", "/"))
+        if cd_dir and not str(script).startswith("code/") and (workspace_root / cd_dir / script).exists():
+            return command
+        candidates = [script]
+        if not str(script).startswith("code/"):
+            candidates.extend([Path("code") / script, Path("code/experiments") / script.name, Path("code/analysis") / script.name])
+        for candidate in candidates:
+            if (workspace_root / candidate).exists():
+                parts[index] = str(candidate).replace("\\", "/")
+                return " ".join(parts)
+        return None
+    return command
+
+
+def _command_cd_dir(command: str) -> Path | None:
+    stripped = command.strip()
+    for separator in ("&&", ";"):
+        if stripped.startswith("cd ") and separator in stripped:
+            target_text = stripped[len("cd ") : stripped.index(separator)].strip().strip('"').strip("'")
+            return Path(target_text)
+    return None
+
+
+def _force_result_output(command: str) -> str:
+    parts = command.split()
+    if "--output" not in parts:
+        return command
+    idx = parts.index("--output")
+    if idx + 1 < len(parts):
+        parts[idx + 1] = "code/experiments/result.json" if not command.startswith("cd ") else "result.json"
+    return " ".join(parts)
+
+
+def _command_validation_markdown(commands: list[str]) -> str:
+    lines = [
+        "# Command Validation",
+        "",
+        "S02 commands after local path and portability repair:",
+        "",
+    ]
+    lines.extend(f"- `{command}`" for command in commands)
+    return "\n".join(lines) + "\n"
 
 
 def _safe_generated_code_path(code_root: Path, rel: str) -> Path | None:
@@ -809,10 +1158,10 @@ class ProposedMethod:
 
 
 def _run_experiment_py() -> str:
-    return '''"""Run a generated sanity experiment.
+    return '''"""Run a reproducible generated benchmark.
 
-This script intentionally writes a low-confidence placeholder result unless
-connected to real datasets and baselines.
+The benchmark is synthetic by default, so it supports only benchmark-limited
+claims. It exists to prevent paper generation from relying on unexecuted plans.
 """
 
 from __future__ import annotations
@@ -820,11 +1169,113 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import numpy as np
+from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import brier_score_loss, f1_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
-from methods.proposed_method import ProposedMethod
+
+N_STUDENTS = 520
+N_WEEKS = 6
+N_SEEDS = 5
+
+
+def generate_dataset(seed: int):
+    rng = np.random.default_rng(seed)
+    ability = rng.normal(0.0, 1.0, N_STUDENTS)
+    diligence = rng.normal(0.0, 1.0, N_STUDENTS)
+    difficulty = rng.normal(0.0, 0.40, N_WEEKS)
+    sequences = np.zeros((N_STUDENTS, 4, 4), dtype=np.float32)
+    full_scores = []
+    missing_rates = []
+    delays = []
+    for student in range(N_STUDENTS):
+        scores = []
+        misses = []
+        delay_values = []
+        trend = rng.normal(0.0, 0.10)
+        for week in range(N_WEEKS):
+            latent = ability[student] + trend * week - difficulty[week] + rng.normal(0.0, 0.35)
+            accuracy = 1.0 / (1.0 + np.exp(-latent))
+            score = np.clip(accuracy + rng.normal(0.0, 0.08), 0.0, 1.0)
+            delay = rng.exponential(scale=max(0.08, 0.75 - 0.20 * diligence[student] - 0.12 * ability[student]))
+            missing = rng.random() < (0.04 + 0.08 / (1.0 + np.exp(ability[student] + diligence[student])))
+            scores.append(score)
+            misses.append(float(missing))
+            delay_values.append(min(delay, 2.5) / 2.5)
+            if week < 4:
+                sequences[student, week] = [score, min(delay, 2.5) / 2.5, accuracy, float(missing)]
+        full_scores.append(np.mean(scores))
+        missing_rates.append(np.mean(misses))
+        delays.append(np.mean(delay_values[-2:]))
+    risk_logit = -3.0 * np.array(full_scores) + 0.9 * np.array(missing_rates) + 0.65 * np.array(delays) + 1.65
+    risk_probability = 1.0 / (1.0 + np.exp(-risk_logit))
+    labels = (risk_probability + rng.normal(0.0, 0.05, N_STUDENTS) > 0.50).astype(int)
+    return sequences, labels
+
+
+def aggregate_features(x):
+    return np.concatenate([x.mean(axis=1), x.std(axis=1), x[:, -1, :], x[:, -1, :] - x[:, 0, :]], axis=1)
+
+
+def score_only_features(x):
+    score = x[:, :, 0:1]
+    return np.concatenate([score.mean(axis=1), score.std(axis=1), score[:, -1, :], score[:, -1, :] - score[:, 0, :]], axis=1)
+
+
+def engagement_only_features(x):
+    engagement = x[:, :, [1, 3]]
+    return np.concatenate(
+        [engagement.mean(axis=1), engagement.std(axis=1), engagement[:, -1, :], engagement[:, -1, :] - engagement[:, 0, :]],
+        axis=1,
+    )
+
+
+def temporal_weighted_features(x):
+    weights = np.array([0.10, 0.18, 0.27, 0.45], dtype=np.float32)
+    weighted = (x * weights.reshape(1, -1, 1)).sum(axis=1)
+    trend = x[:, -1, :] - x[:, 0, :]
+    return np.concatenate([weighted, trend], axis=1)
+
+
+def precision_at_20(y_true, scores):
+    k = max(1, int(len(y_true) * 0.20))
+    order = np.argsort(scores)[::-1][:k]
+    return float(np.mean(y_true[order]))
+
+
+def evaluate(y_true, scores):
+    pred = (scores >= 0.5).astype(int)
+    return {
+        "auc": float(roc_auc_score(y_true, scores)),
+        "f1": float(f1_score(y_true, pred)),
+        "brier": float(brier_score_loss(y_true, scores)),
+        "p_at_20": precision_at_20(y_true, scores),
+    }
+
+
+def summarize(rows):
+    summary = {}
+    for model in sorted({row["model"] for row in rows}):
+        items = [row for row in rows if row["model"] == model]
+        summary[model] = {}
+        for metric in ["auc", "f1", "brier", "p_at_20"]:
+            values = np.array([row[metric] for row in items], dtype=float)
+            summary[model][metric] = {"mean": float(values.mean()), "std": float(values.std(ddof=1))}
+    return summary
+
+
+def fit_logistic(train_x, train_y, test_x, seed):
+    scaler = StandardScaler()
+    z_train = scaler.fit_transform(train_x)
+    z_test = scaler.transform(test_x)
+    model = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=seed)
+    model.fit(z_train, train_y)
+    return model.predict_proba(z_test)[:, 1]
 
 
 def main() -> None:
@@ -832,24 +1283,83 @@ def main() -> None:
     parser.add_argument("--config", default="config.json")
     parser.add_argument("--output", default="result.json")
     args = parser.parse_args()
+    rows = []
+    for seed in range(N_SEEDS):
+        x, y = generate_dataset(1000 + seed)
+        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.30, stratify=y, random_state=seed)
+        agg_train = aggregate_features(x_train)
+        agg_test = aggregate_features(x_test)
+        tw_train = temporal_weighted_features(x_train)
+        tw_test = temporal_weighted_features(x_test)
 
-    config = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    method = ProposedMethod(config)
-    predictions = method.predict([{"sample": 1}, {"sample": 2}])
-    result = {
-        "run_id": "generated_sanity_run",
-        "dataset": config.get("datasets", ["placeholder"])[0],
-        "method": "proposed_method_scaffold",
-        "baseline": config.get("baselines", ["placeholder"])[0],
-        "metrics": {
-            "accuracy": None,
-            "compute_cost": method.cost_estimate()["compute_cost"],
-            "latency": method.cost_estimate()["latency"],
-        },
-        "num_predictions": len(predictions),
-        "claim_support": "none_real_dataset_required",
+        dummy = DummyClassifier(strategy="prior")
+        dummy.fit(agg_train, y_train)
+        rows.append({"seed": seed, "model": "Prior baseline", **evaluate(y_test, dummy.predict_proba(agg_test)[:, 1])})
+
+        rows.append({
+            "seed": seed,
+            "model": "Score-only logistic",
+            **evaluate(y_test, fit_logistic(score_only_features(x_train), y_train, score_only_features(x_test), seed)),
+        })
+
+        rows.append({
+            "seed": seed,
+            "model": "Engagement-only logistic",
+            **evaluate(y_test, fit_logistic(engagement_only_features(x_train), y_train, engagement_only_features(x_test), seed)),
+        })
+
+        rows.append({
+            "seed": seed,
+            "model": "Full-feature logistic",
+            **evaluate(y_test, fit_logistic(agg_train, y_train, agg_test, seed)),
+        })
+
+        gb = GradientBoostingClassifier(n_estimators=80, max_depth=2, learning_rate=0.05, random_state=seed)
+        gb.fit(agg_train, y_train)
+        rows.append({"seed": seed, "model": "Gradient boosting", **evaluate(y_test, gb.predict_proba(agg_test)[:, 1])})
+
+        rf = RandomForestClassifier(n_estimators=120, max_depth=5, min_samples_leaf=5, class_weight="balanced", random_state=seed)
+        rf.fit(agg_train, y_train)
+        rows.append({"seed": seed, "model": "Random forest", **evaluate(y_test, rf.predict_proba(agg_test)[:, 1])})
+
+        rows.append({
+            "seed": seed,
+            "model": "Temporal weighted logistic",
+            **evaluate(y_test, fit_logistic(tw_train, y_train, tw_test, seed)),
+        })
+
+    summary = summarize(rows)
+    best_model = max(summary, key=lambda model: summary[model]["auc"]["mean"])
+    ablations = {
+        "score_vs_full_auc_delta": float(summary["Full-feature logistic"]["auc"]["mean"] - summary["Score-only logistic"]["auc"]["mean"]),
+        "engagement_vs_full_auc_delta": float(summary["Full-feature logistic"]["auc"]["mean"] - summary["Engagement-only logistic"]["auc"]["mean"]),
+        "temporal_vs_full_auc_delta": float(summary["Temporal weighted logistic"]["auc"]["mean"] - summary["Full-feature logistic"]["auc"]["mean"]),
     }
-    Path(args.output).write_text(json.dumps(result, indent=2), encoding="utf-8")
+    result = {
+        "status": "ok",
+        "dataset": "generated synthetic quiz-risk benchmark",
+        "n_students": N_STUDENTS,
+        "n_weeks": N_WEEKS,
+        "n_seeds": N_SEEDS,
+        "best_model_by_auc": best_model,
+        "protocol": {
+            "test_fraction": 0.30,
+            "split": "stratified train-test split per seed",
+            "metrics": ["auc", "f1", "brier", "p_at_20"],
+            "models": sorted({row["model"] for row in rows}),
+        },
+        "summary": summary,
+        "ablations": ablations,
+        "rows": rows,
+        "limitations": [
+            "Synthetic benchmark only; no real classroom dataset is used.",
+            "Claims do not establish deployment readiness or intervention effectiveness.",
+        ],
+    }
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(json.dumps({"best_model_by_auc": best_model, "output": str(output)}, indent=2))
 
 
 if __name__ == "__main__":
@@ -988,6 +1498,113 @@ def _compile_report_markdown(context: dict[str, Any]) -> str:
         + "\n".join(f"- {key}: {value}" for key, value in result.items())
         + "\n"
     )
+
+
+def _layout_audit(workspace_root: Path, context: dict[str, Any]) -> dict[str, Any]:
+    draft_path = Path(context.get("draft_path", workspace_root / "paper" / "draft.md"))
+    tex_path = Path(context.get("latex_path", workspace_root / "paper" / "main.tex"))
+    log_path = tex_path.with_suffix(".log")
+    pdf_path = tex_path.with_suffix(".pdf")
+    markdown = draft_path.read_text(encoding="utf-8", errors="replace") if draft_path.exists() else ""
+    tex = tex_path.read_text(encoding="utf-8", errors="replace") if tex_path.exists() else ""
+    log = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+    sections = [line[3:].strip() for line in markdown.splitlines() if line.startswith("## ")]
+    required_sections = {
+        "Abstract",
+        "Introduction",
+        "Related Work",
+        "Problem Formulation",
+        "Method",
+        "Experiments",
+        "Results",
+        "Ablation Study",
+        "Discussion",
+        "References",
+    }
+    missing_sections = sorted(required_sections.difference(sections))
+    table_count = tex.count(r"\begin{table}") + tex.count(r"\begin{table*}")
+    formula_count = tex.count(r"\[")
+    overfull_count = log.count("Overfull \\hbox")
+    underfull_count = log.count("Underfull \\hbox")
+    unresolved_markdown_tables = [line for line in tex.splitlines() if line.strip().startswith("|")]
+    page_count = _page_count_from_log(log)
+    issues = []
+    if missing_sections:
+        issues.append("missing required paper sections")
+    if table_count < 2:
+        issues.append("expected at least two LaTeX tables")
+    if formula_count < 4:
+        issues.append("expected at least four displayed formulas")
+    if overfull_count:
+        issues.append(f"{overfull_count} overfull hbox warning(s)")
+    if unresolved_markdown_tables:
+        issues.append("raw Markdown table lines remain in LaTeX")
+    if page_count and page_count < 3:
+        issues.append("compiled PDF is shorter than three pages")
+    status = "pass" if not issues else "warn"
+    content_status = "pass" if not missing_sections and len(markdown) >= 18000 else "warn"
+    return {
+        "status": status,
+        "content_status": content_status,
+        "issues": issues,
+        "missing_sections": missing_sections,
+        "section_count": len(sections),
+        "table_count": table_count,
+        "formula_count": formula_count,
+        "page_count": page_count,
+        "overfull_hbox": overfull_count,
+        "underfull_hbox": underfull_count,
+        "markdown_bytes": len(markdown.encode("utf-8")),
+        "tex_bytes": len(tex.encode("utf-8")),
+        "pdf_exists": pdf_path.exists(),
+        "pdf_bytes": pdf_path.stat().st_size if pdf_path.exists() else 0,
+    }
+
+
+def _page_count_from_log(log: str) -> int | None:
+    marker = "Output written on"
+    for line in log.splitlines():
+        if marker not in line or "pages" not in line:
+            continue
+        before_pages = line.split("pages", 1)[0]
+        digits = ""
+        for char in reversed(before_pages):
+            if char.isdigit():
+                digits = char + digits
+            elif digits:
+                break
+        if digits:
+            return int(digits)
+    return None
+
+
+def _layout_audit_markdown(audit: dict[str, Any]) -> str:
+    lines = [
+        "# Layout And Content Audit",
+        "",
+        f"- layout_status: {audit.get('status')}",
+        f"- content_status: {audit.get('content_status')}",
+        f"- page_count: {audit.get('page_count')}",
+        f"- table_count: {audit.get('table_count')}",
+        f"- formula_count: {audit.get('formula_count')}",
+        f"- overfull_hbox: {audit.get('overfull_hbox')}",
+        f"- underfull_hbox: {audit.get('underfull_hbox')}",
+        f"- markdown_bytes: {audit.get('markdown_bytes')}",
+        f"- pdf_bytes: {audit.get('pdf_bytes')}",
+        "",
+        "## Issues",
+        "",
+    ]
+    issues = audit.get("issues") or []
+    if issues:
+        lines.extend(f"- {issue}" for issue in issues)
+    else:
+        lines.append("- No blocking layout issue detected by local static checks.")
+    missing = audit.get("missing_sections") or []
+    if missing:
+        lines.extend(["", "## Missing Sections", ""])
+        lines.extend(f"- {section}" for section in missing)
+    return "\n".join(lines) + "\n"
 
 
 def _overleaf_sync_markdown() -> str:

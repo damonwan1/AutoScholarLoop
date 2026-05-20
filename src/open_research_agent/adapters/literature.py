@@ -18,6 +18,7 @@ class PaperRecord:
     abstract: str = ""
     citations: int = 0
     url: str = ""
+    doi: str = ""
 
 
 class LiteratureProvider(ABC):
@@ -49,7 +50,7 @@ class SemanticScholarProvider(LiteratureProvider):
             {
                 "query": query,
                 "limit": limit,
-                "fields": "title,authors,venue,year,abstract,citationCount,url",
+                "fields": "title,authors,venue,year,abstract,citationCount,url,externalIds",
             }
         )
         headers = {}
@@ -57,8 +58,11 @@ class SemanticScholarProvider(LiteratureProvider):
         if api_key:
             headers["X-API-KEY"] = api_key
         req = Request(f"{self.endpoint}?{params}", headers=headers)
-        with urlopen(req, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(req, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return []
         time.sleep(1.0)
         records = []
         for item in payload.get("data", []):
@@ -72,6 +76,7 @@ class SemanticScholarProvider(LiteratureProvider):
                     abstract=item.get("abstract") or "",
                     citations=int(item.get("citationCount") or 0),
                     url=item.get("url") or "",
+                    doi=(item.get("externalIds") or {}).get("DOI") or "",
                 )
             )
         return records
@@ -86,8 +91,11 @@ class OpenAlexProvider(LiteratureProvider):
         if mail:
             params["mailto"] = mail
         req = Request(f"{self.endpoint}?{urlencode(params)}")
-        with urlopen(req, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with urlopen(req, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return []
         records = []
         for item in payload.get("results", []):
             authors = ", ".join(
@@ -107,6 +115,7 @@ class OpenAlexProvider(LiteratureProvider):
                     abstract=item.get("abstract") or "",
                     citations=int(item.get("cited_by_count") or 0),
                     url=item.get("id") or "",
+                    doi=item.get("doi") or "",
                 )
             )
         return records
