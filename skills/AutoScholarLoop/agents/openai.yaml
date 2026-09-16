@@ -1,0 +1,4 @@
+interface:
+  display_name: "AutoScholarLoop"
+  short_description: "Run literature-driven research, coding, and paper-writing loops."
+  default_prompt: "Use $autoscholarloop to turn recent paper clusters into research ideas, implementation iterations, and conference-style drafts."
