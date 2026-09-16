@@ -2,7 +2,11 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-**在 Codex、Claude、DeepSeek 等 Skills 环境中使用，发送：Help me install AutoScholarLoop from [https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop](https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop) with Skills.**
+**在 Codex、Claude、DeepSeek 等支持 Skills 的环境中复制并发送：**
+
+```text
+Help me install AutoScholarLoop from https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop with Skills.
+```
 
 **AutoScholarLoop** 是一套面向自动化科研流程的开源 AUTO Research 框架。它把研究方向、参考论文、笔记、BibTeX、可选代码和目标投稿格式组织成一个可审计的多智能体科研闭环，用于完成文献建档、idea 生成与筛选、实验执行、论文写作、质量审计和投稿候选包生成。
 

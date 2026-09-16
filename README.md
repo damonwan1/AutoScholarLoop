@@ -2,7 +2,11 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-**For Codex, Claude, DeepSeek, and other Skills harnesses, send: Help me install AutoScholarLoop from [https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop](https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop) with Skills.**
+**Use this prompt in Codex, Claude, DeepSeek, or any Skills-compatible harness:**
+
+```text
+Help me install AutoScholarLoop from https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop with Skills.
+```
 
 **AutoScholarLoop** is an open-source AUTO Research framework for building
 auditable, multi-agent research loops. It helps users turn an initial research
