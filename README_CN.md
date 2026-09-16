@@ -2,6 +2,8 @@
 
 [English](README.md) | [中文](README_CN.md)
 
+**在 Codex、Claude、DeepSeek 等 Skills 环境中使用，发送：Help me install AutoScholarLoop from [https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop](https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop) with Skills.**
+
 **AutoScholarLoop** 是一套面向自动化科研流程的开源 AUTO Research 框架。它把研究方向、参考论文、笔记、BibTeX、可选代码和目标投稿格式组织成一个可审计的多智能体科研闭环，用于完成文献建档、idea 生成与筛选、实验执行、论文写作、质量审计和投稿候选包生成。
 
 项目面向 **CAS CNIC，中国科学院计算机网络信息中心 AI Group** 的科研自动化场景开发。系统不是一个单轮聊天机器人，而是模拟一个小型科研组：教授组负责决策，博士组负责执行，写作组负责成稿，质量控制组负责审计。
