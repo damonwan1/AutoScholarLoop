@@ -12,7 +12,7 @@ Help me install AutoScholarLoop from https://github.com/damonwan1/AutoScholarLoo
 auditable, multi-agent research loops. It helps users turn an initial research
 direction, recent papers, reference notes, and optional code into a staged
 research process that can generate ideas, run execution loops, draft papers,
-review claims, and package submission candidates.
+review claims, and package submission candidates (Part of BoundX, Yisuan Fangzhou).
 
 The project is developed for research automation scenarios at AI Group, CAS CNIC
 (Computer Network Information Center, Chinese Academy of Sciences).
@@ -291,6 +291,16 @@ Developed for:
 
 **CAS CNIC**  
 Computer Network Information Center, Chinese Academy of Sciences  
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=damonwan1%2Fautoscholarloop&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=damonwan1/autoscholarloop&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=damonwan1/autoscholarloop&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=damonwan1/autoscholarloop&type=date&legend=top-left" />
+ </picture>
+</a>
 
 
 ## License & Responsible Use
