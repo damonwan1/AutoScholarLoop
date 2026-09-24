@@ -8,9 +8,9 @@
 Help me install AutoScholarLoop from https://github.com/damonwan1/AutoScholarLoop/tree/master/skills/AutoScholarLoop with Skills.
 ```
 
-**AutoScholarLoop** 是一套面向自动化科研流程的开源 AUTO Research 框架。它把研究方向、参考论文、笔记、BibTeX、可选代码和目标投稿格式组织成一个可审计的多智能体科研闭环，用于完成文献建档、idea 生成与筛选、实验执行、论文写作、质量审计和投稿候选包生成。
+**AutoScholarLoop** 是一套面向自动化科研流程的开源 AUTO Research 框架。它把研究方向、参考论文、笔记、BibTeX、可选代码和目标投稿格式组织成一个可审计的多智能体科研闭环，用于完成文献建档、idea 生成与筛选、实验执行、论文写作、质量审计和投稿候选包生成（本项目属于异算方舟-Boundx的一部分）。
 
-项目面向 **CAS CNIC，中国科学院计算机网络信息中心 AI Group** 的科研自动化场景开发。系统不是一个单轮聊天机器人，而是模拟一个小型科研组：教授组负责决策，博士组负责执行，写作组负责成稿，质量控制组负责审计。
+项目面向 **CAS CNIC，中国科学院计算机网络信息中心，人工智能部** 的科研自动化场景开发。系统不是一个单轮聊天机器人，而是模拟一个小型科研组：教授组负责决策，博士组负责执行，写作组负责成稿，质量控制组负责审计。
 
 ![AI Group 展示图](./img/img1.png)
 
@@ -334,6 +334,16 @@ AutoScholarLoop 可以帮助组织科研流程、生成候选 idea、写代码�
 - 论文中的 claim 是否被结果支持；
 - 目标会议/期刊是否允许或要求披露 AI 辅助；
 - 作者署名、伦理合规和数据使用许可是否满足要求。
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=damonwan1%2Fautoscholarloop&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=damonwan1/autoscholarloop&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=damonwan1/autoscholarloop&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=damonwan1/autoscholarloop&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ## License & Responsible Use
 
